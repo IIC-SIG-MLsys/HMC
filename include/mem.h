@@ -177,5 +177,28 @@ public:
   status_t copy_device_to_device(void *dest, const void *src, size_t size);
 };
 
+class HuaweiMemory : public MemoryBase {
+public:
+    HuaweiMemory(int device_id, MemoryType mem_type)
+        : MemoryBase(device_id, mem_type) {
+        status_t sret;
+        sret = this->init();
+        if (sret != status_t::SUCCESS) {
+            logError("HuaweiMemory init mem_ops error: %s.", status_to_string(sret));
+            exit(1);
+        }
+    };
+    ~HuaweiMemory() { this->free(); }
+
+    status_t init();
+    status_t free();
+    status_t allocate_buffer(void **addr, size_t size);
+    status_t free_buffer(void *addr);
+
+    status_t copy_host_to_device(void *dest, const void *src, size_t size);
+    status_t copy_device_to_host(void *dest, const void *src, size_t size);
+    status_t copy_device_to_device(void *dest, const void *src, size_t size);
+};
+
 } // namespace hddt
 #endif

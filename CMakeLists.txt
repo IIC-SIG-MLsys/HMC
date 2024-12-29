@@ -23,6 +23,7 @@ endif()
 include(FindRocm)
 include(FindCuda)
 include(FindNeuware)
+include(FindHuawei)
 
 if(ROCM_FOUND)
     # pass var to code
@@ -87,6 +88,26 @@ elseif(NEUWARE_FOUND)
     target_link_libraries(hddt_neuware_shared PRIVATE ${NEUWARE_LIBRARIES})
     install(TARGETS hddt_neuware_shared DESTINATION lib)
 
+elseif(HUAWEI_FOUND)
+    # pass var to code
+    add_definitions(-DENABLE_HUAWEI)
+    file(GLOB_RECURSE HUAWEI_SOURCES "src/*/huawei/*.cpp")
+
+    include_directories(${HUAWEI_INCLUDE_DIRS})
+    # static
+    if(BUILD_STATIC_LIB)
+        add_library(hddt_huawei_static STATIC ${HUAWEI_SOURCES})
+        target_link_libraries(hddt_huawei_static PRIVATE ${HUAWEI_LIBRARIES})
+        install(TARGETS hddt_huawei_static DESTINATION lib)
+    endif()
+
+    # dynamic
+    add_library(hddt_huawei_shared SHARED ${HUAWEI_SOURCES})
+    target_link_libraries(hddt_huawei_shared PRIVATE ${HUAWEI_LIBRARIES})
+    install(TARGETS hddt_huawei_shared DESTINATION lib)
+
+endif()
+
 else()
     message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
 endif()
@@ -113,6 +134,8 @@ if(BUILD_STATIC_LIB)
         target_link_libraries(hddt_static_lib PUBLIC hddt_cuda_static)
     elseif(NEUWARE_FOUND)
         target_link_libraries(hddt_static_lib PUBLIC hddt_neuware_static)
+    elseif(HUAWEI_FOUND)
+        target_link_libraries(hddt_static_lib PUBLIC hddt_huawei_static)
     else()
         message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
     endif()
@@ -147,6 +170,8 @@ elseif(CUDA_FOUND)
     target_link_libraries(hddt_shared_lib PUBLIC hddt_cuda_shared)
 elseif(NEUWARE_FOUND)
     target_link_libraries(hddt_shared_lib PUBLIC hddt_neuware_shared)
+elseif(HUAWEI_FOUND)
+    target_link_libraries(hddt_shared_lib PUBLIC hddt_huawei_shared)
 else()
     message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
 endif()

@@ -31,3 +31,8 @@ target_link_libraries(${BINARY} PRIVATE GTest::GTest GTest::Main)
 
 target_link_libraries(${BINARY} PUBLIC glog)
 target_link_libraries(${BINARY} PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
+
+# 链接 Huawei Ascend 库
+if(HUAWEI_FOUND)
+    target_link_libraries(${BINARY} PUBLIC ${HUAWEI_LIBRARIES})
+endif()
