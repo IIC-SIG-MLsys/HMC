@@ -23,6 +23,9 @@ endif()
 include(FindRocm)
 include(FindCuda)
 include(FindNeuware)
+include(FindHuawei)
+
+
 
 if(ROCM_FOUND)
     # pass var to code
@@ -87,8 +90,34 @@ elseif(NEUWARE_FOUND)
     target_link_libraries(hddt_neuware_shared PRIVATE ${NEUWARE_LIBRARIES})
     install(TARGETS hddt_neuware_shared DESTINATION lib)
 
+
+elseif(HUAWEI_FOUND)
+    add_definitions(-DENABLE_HUAWEI)
+    file(GLOB_RECURSE HUAWEI_SOURCES "src/*/huawei/*.cpp")
+
+    include_directories(${HUAWEI_INCLUDE_DIRS})
+    link_directories(${HUAWEI_LIB_DIRS})
+
+    # Static library
+    if(BUILD_STATIC_LIB)
+        add_library(hddt_huawei_static STATIC ${HUAWEI_SOURCES})
+	target_link_libraries(hddt_huawei_static PRIVATE ${HUAWEI_LIBRARIES} ${ASCENDCL_LIBRARY})
+        install(TARGETS hddt_huawei_static DESTINATION lib)
+    endif()
+
+    # Dynamic library
+    add_library(hddt_huawei_shared SHARED ${HUAWEI_SOURCES})
+    target_link_libraries(hddt_huawei_shared PRIVATE ${HUAWEI_LIBRARIES} ${ASCENDCL_LIBRARY})
+
+    set_target_properties(hddt_huawei_shared PROPERTIES
+        INSTALL_RPATH "$ENV{ASCEND_HOME}/ascend-toolkit/latest/lib64"
+        BUILD_RPATH "$ENV{ASCEND_HOME}/ascend-toolkit/latest/lib64"
+    )
+    install(TARGETS hddt_huawei_shared DESTINATION lib)
+
+
 else()
-    message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
+    message(FATAL_ERROR "ROCm or CUDA or NEUWARE or HUAWEI is required but was not found.")
 endif()
 
 
@@ -113,8 +142,10 @@ if(BUILD_STATIC_LIB)
         target_link_libraries(hddt_static_lib PUBLIC hddt_cuda_static)
     elseif(NEUWARE_FOUND)
         target_link_libraries(hddt_static_lib PUBLIC hddt_neuware_static)
+    elseif(HUAWEI_FOUND)
+        target_link_libraries(hddt_static_lib PUBLIC hddt_huawei_static)
     else()
-        message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
+        message(FATAL_ERROR "ROCm or CUDA or NEUWARE or HUAWEI is required but was not found.")
     endif()
 
     # with rdma
@@ -130,11 +161,11 @@ if(BUILD_STATIC_LIB)
     target_include_directories(hddt_static_lib PUBLIC ${GLOG_INCLUDE_DIRS})
     target_link_libraries(hddt_static_lib PUBLIC glog)
 
-    # with openmpi
+    # with openmpi (静态库部分)
     include(FindMPI)
-    target_include_directories(hddt_static_lib PUBLIC ${MPI_INCLUDE_DIR})
-    target_link_libraries(hddt_static_lib PUBLIC ${MPI_LIBRARY})
-    
+    target_include_directories(hddt_static_lib PUBLIC include ${MPI_INCLUDE_DIR})
+    target_link_libraries(hddt_static_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+
     install(TARGETS hddt_static_lib DESTINATION lib)
 endif()
 
@@ -147,8 +178,10 @@ elseif(CUDA_FOUND)
     target_link_libraries(hddt_shared_lib PUBLIC hddt_cuda_shared)
 elseif(NEUWARE_FOUND)
     target_link_libraries(hddt_shared_lib PUBLIC hddt_neuware_shared)
+elseif(HUAWEI_FOUND)
+    target_link_libraries(hddt_shared_lib PUBLIC hddt_huawei_shared)
 else()
-    message(FATAL_ERROR "ROCm or CUDA or NEUWARE is required but was not found.")
+    message(FATAL_ERROR "ROCm or CUDA or NEUWARE or HUAWEI is required but was not found.")
 endif()
 
 # with rdma
@@ -164,10 +197,16 @@ find_package(glog REQUIRED)
 target_include_directories(hddt_shared_lib PUBLIC ${GLOG_INCLUDE_DIRS})
 target_link_libraries(hddt_shared_lib PUBLIC glog)
 
-# with openmpi
+
+# with openmpi (动态库部分)
 include(FindMPI)
-include_directories(${MPI_INCLUDE_DIR})
-target_link_libraries(hddt_shared_lib PUBLIC ${MPI_LIBRARY})
+set(MPI_CXX_LIBRARY ${MPI_CXX_LIBRARY} CACHE INTERNAL "MPI C++ Library")
+set(MPI_INCLUDE_DIR ${MPI_INCLUDE_DIR} CACHE INTERNAL "MPI Include Directory")
+set(MPI_LIBRARY ${MPI_LIBRARY} CACHE INTERNAL "MPI Library")
+
+target_include_directories(hddt_shared_lib PUBLIC include ${MPI_INCLUDE_DIR})
+target_link_libraries(hddt_shared_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+
 
 if(BUILD_PYTHON_MOD)
     # # pybind
@@ -199,4 +238,4 @@ add_subdirectory(apps/rdma_app)
 # add_subdirectory(apps/coll_app)
 
 # # build test
-# add_subdirectory(tests)
+add_subdirectory(tests)

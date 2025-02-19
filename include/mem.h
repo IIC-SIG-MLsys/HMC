@@ -1,6 +1,8 @@
 #ifndef MEMORY_H
 #define MEMORY_H
 
+#include <acl/acl.h>
+#include <cstdint>
 #include <cstring>
 #include <hddt.h>
 #include <memory>
@@ -15,7 +17,8 @@ enum class MemoryType {
   CPU,
   NVIDIA_GPU,
   AMD_GPU,
-  CAMBRICON_MLU
+  CAMBRICON_MLU,
+  HUAWEI_ASCEND_NPU
 }; // todo: NVIDIA_GPU_MANAGED, AMD_GPU_MANAGED
 
 MemoryType memory_supported();
@@ -175,6 +178,26 @@ public:
   status_t copy_host_to_device(void *dest, const void *src, size_t size);
   status_t copy_device_to_host(void *dest, const void *src, size_t size);
   status_t copy_device_to_device(void *dest, const void *src, size_t size);
+};
+
+class HuaweiMemory : public MemoryBase {
+public:
+  HuaweiMemory(int device_id, MemoryType mem_type);
+  ~HuaweiMemory();
+
+  status_t init();
+  status_t free();
+  status_t allocate_buffer(void **addr, size_t size);
+  status_t free_buffer(void *addr);
+
+  status_t copy_host_to_device(void *dest, const void *src, size_t size);
+  status_t copy_device_to_host(void *dest, const void *src, size_t size);
+  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+
+private:
+  aclrtContext context_; // 上下文
+  aclrtStream stream_;   // 流
+  bool is_initialized_ = false;
 };
 
 } // namespace hddt
