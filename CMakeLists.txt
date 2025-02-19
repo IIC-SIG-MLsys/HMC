@@ -93,7 +93,8 @@ endif()
 
 
 # # build src
-include_directories(include)
+include_directories(include) # 向外暴露的头文件
+include_directories(src) # 源文件下的其他头文件
 
 # with rdma
 include(FindRdma)
@@ -195,8 +196,9 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/train_cnn)
 # add_subdirectory(apps/simple_inference)
 # add_subdirectory(apps/torch_app)
-add_subdirectory(apps/rdma_app)
+# add_subdirectory(apps/rdma_app)
 # add_subdirectory(apps/coll_app)
+add_subdirectory(apps/comm_app)
 
 # # build test
 # add_subdirectory(tests)

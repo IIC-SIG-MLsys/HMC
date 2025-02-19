@@ -1,11 +1,16 @@
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
 #ifndef HDDT_COLL_H
 #define HDDT_COLL_H
+
+#include <hddt.h>
 
 #include <ifaddrs.h>
 #include <map>
 #include <mpi.h>
 #include <netdb.h>
-#include <p2p.h>
+
 
 #define HOSTNAME_MAX 256
 #define MAX_IP_SIZE 1024

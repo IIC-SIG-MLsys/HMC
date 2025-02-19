@@ -1,5 +1,8 @@
-#include <hddt.h>
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
 #include <mem.h>
+#include "mem_type.h"
 
 namespace hddt {
 
@@ -45,6 +48,10 @@ status_t Memory::copy_device_to_device(void *dest, const void *src,
 
 status_t Memory::allocate_buffer(void **addr, size_t size) {
   return this->memoryClass->allocate_buffer(addr, size);
+}
+
+status_t Memory::allocate_peerable_buffer(void **addr, size_t size) {
+  return this->memoryClass->allocate_peerable_buffer(addr, size);
 }
 
 status_t Memory::free_buffer(void *addr) {

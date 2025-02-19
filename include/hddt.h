@@ -1,3 +1,6 @@
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
 #ifndef HDDT_H
 #define HDDT_H
 
@@ -16,68 +19,78 @@
 #include "mlu_op.h"
 #endif
 
+#include "mem.h"
+#include "status.h"
+
 #include <iostream>
 #include <thread>
-
+#include <memory>
 #include <cstdlib>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <unistd.h>
-
+#include <utility> // For std::pair
+#include <unordered_map>
 #include <atomic>
 #include <chrono>
-
-#include <glog/logging.h>
+#include <csignal> // For signal
 
 namespace hddt {
-/* status and log */
-enum class status_t { SUCCESS, ERROR, UNSUPPORT };
 
-const char *status_to_string(status_t status);
+/* communicator */
+class ConnManager;
+class Endpoint;
 
-#define logError(fmt, ...)                                                     \
-  do {                                                                         \
-    char buffer[1024];                                                         \
-    int len = snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);            \
-    if (len >= 0) {                                                            \
-      LOG(ERROR) << buffer;                                                    \
-    }                                                                          \
-  } while (0)
-#define logDebug(fmt, ...)                                                     \
-  do {                                                                         \
-    char buffer[1024];                                                         \
-    int len = snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);            \
-    if (len >= 0) {                                                            \
-      LOG(WARNING) << buffer;                                                  \
-    }                                                                          \
-  } while (0)
-#define logInfo(fmt, ...)                                                      \
-  do {                                                                         \
-    char buffer[1024];                                                         \
-    int len = snprintf(buffer, sizeof(buffer), fmt, ##__VA_ARGS__);            \
-    if (len >= 0) {                                                            \
-      LOG(INFO) << buffer;                                                     \
-    }                                                                          \
-  } while (0)
-
-/*
-gpu driver init
-*/
-status_t init_gpu_driver(int device_id);
-status_t free_gpu_driver();
-
-// pybind11 example code
-int add(int i, int j);
-class Pet {
+class ConnBuffer {
 public:
-  Pet(const std::string &name) : name(name) {}
-  void setName(const std::string &name_) { name = name_; }
-  const std::string &getName() const { return name; }
+  void *ptr = nullptr;
+  size_t buffer_size;
+  Memory *mem_ops = nullptr;
 
-private:
-  std::string name;
+  ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type = MemoryType::DEFAULT) : buffer_size(buffer_size) {
+    mem_ops = new Memory(1, mem_type);
+    mem_ops->allocate_peerable_buffer(&ptr, buffer_size);
+  }
+
+  // buffer必须在首次分配，并且不允许重新分配，否则指针发生改变，会导致通信的缓冲区失效
+
+  ~ConnBuffer() {
+    mem_ops->free_buffer(ptr);
+    mem_ops->free();
+  }
 };
+
+enum class ConnType { RDMA, UCX };
+
+class Communicator {
+private:
+  std::unordered_map<uint32_t, std::pair<std::string, uint16_t>> rank_addr_map;
+  std::shared_ptr<ConnBuffer> buffer;
+  std::shared_ptr<ConnManager> conn_manager; // must be shared, enable shared obj
+
+public:
+  Communicator(std::shared_ptr<ConnBuffer> buffer);
+
+  status_t sendData(uint32_t node_rank, size_t ptr_bias, size_t size);
+  status_t recvData(uint32_t node_rank, size_t* recv_flag);
+
+  status_t connectTo(uint32_t node_rank, ConnType connType);
+  status_t initServer(std::string ip, uint16_t port, ConnType serverType);
+
+  // status_t sendDataNB(uint32_t node_rank, uint64_t ptr_bias); // no block
+  // status_t recvDataNB(uint32_t node_rank, uint64_t ptr_bias);
+  // status_t syncStatus() // test no block event status
+
+  status_t addNewRankAddr(uint32_t rank, std::string ip, uint16_t port);
+  status_t delRankAddr(uint32_t rank);
+
+  ~Communicator();
+private:
+  const std::pair<std::string, uint16_t>* _getAddrByRank(uint32_t node_rank);
+  Endpoint* _getEndpointByRank(uint32_t node_rank);
+};
+
 
 } // namespace hddt
 

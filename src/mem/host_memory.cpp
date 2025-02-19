@@ -1,4 +1,8 @@
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
 #include <mem.h>
+#include "mem_type.h"
 
 namespace hddt {
 MemoryType memory_supported() {
@@ -39,6 +43,10 @@ status_t HostMemory::allocate_buffer(void **addr, size_t size) {
     *addr = buffer;
     return status_t::SUCCESS;
   }
+}
+
+status_t HostMemory::allocate_peerable_buffer(void **addr, size_t size) {
+  return this->allocate_buffer(addr, size);
 }
 
 status_t HostMemory::free_buffer(void *addr) {
