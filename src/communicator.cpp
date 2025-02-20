@@ -6,36 +6,6 @@
 
 namespace hddt{
 
-/*
-  Factory Function for create a Communicator
-*/
-// [[nodiscard]] std::unique_ptr<Communicator>
-// CreateCommunicator(Memory *mem_op, CommunicatorType comm_type, bool is_server,
-//                    bool is_client, std::string client_ip, uint16_t client_port,
-//                    std::string server_ip, uint16_t server_port, int retry_times,
-//                    int retry_delay_time) {
-//   if (comm_type == CommunicatorType::DEFAULT) {
-//     if (support_rdma()) {
-//       comm_type = CommunicatorType::RDMA;
-//     } else {
-//       comm_type = CommunicatorType::TCP;
-//     }
-//   }
-
-//   switch (comm_type) {
-//   case CommunicatorType::RDMA:
-//     return std::make_unique<RDMACommunicator>(
-//         mem_op, is_server, is_client, client_ip, client_port, server_ip,
-//         server_port, retry_times, retry_delay_time);
-//   case CommunicatorType::TCP:
-//     return std::make_unique<TCPCommunicator>(
-//         mem_op, is_server, is_client, client_ip, client_port, server_ip,
-//         server_port, retry_times, retry_delay_time);
-//   default:
-//     return nullptr;
-//   }
-// }
-
 Communicator::Communicator(std::shared_ptr<ConnBuffer> buffer) : buffer(buffer) {
   conn_manager = std::make_shared<ConnManager>(buffer);
 };
@@ -45,19 +15,18 @@ Communicator::~Communicator() {
   conn_manager.reset();
   logDebug("finished");
 }
-
-status_t Communicator::sendData(uint32_t node_rank, size_t ptr_bias, size_t size) {
+ 
+status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size) {
   // TODO:
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
     logError("Communicator::connect: endpoint by rank %d does not exist", node_rank);
     return status_t::ERROR;
   }
-  char* ptr = static_cast<char*>(buffer->ptr) + (ptr_bias/sizeof(char));
-  return ep->sendData(ptr, size);
+  return ep->writeData(ptr_bias, size);
 };
 
-status_t Communicator::recvData(uint32_t node_rank, size_t* recv_flag) {
+status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias, size_t size) {
   // TDDO:
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
@@ -65,7 +34,7 @@ status_t Communicator::recvData(uint32_t node_rank, size_t* recv_flag) {
     return status_t::ERROR;
   }
 
-  return ep->recvData(recv_flag);
+  return ep->readData(ptr_bias, size);
 };
 
 status_t Communicator::connectTo(uint32_t node_rank, ConnType connType){
@@ -138,6 +107,67 @@ Endpoint* Communicator::_getEndpointByRank(uint32_t node_rank) {
   logDebug("Communicator::connect: get endpoint by rank %d failed", node_rank);
   return nullptr;
 };
+
+
+/* ConnBuffer */
+
+ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type): buffer_size(buffer_size) {
+  mem_ops = new Memory(1, mem_type);
+  mem_ops->allocate_peerable_buffer(&ptr, buffer_size);
+};
+
+ConnBuffer::~ConnBuffer() {
+  mem_ops->free_buffer(ptr);
+  mem_ops->free();
+}
+
+// 从CPU向ConnBuffer写入数据
+status_t ConnBuffer::writeFromCpu(void* src, size_t size, size_t bias) {
+    if (bias + size > buffer_size) {
+      logError("Invalid data bias and size");
+      return status_t::ERROR;
+    }
+    return mem_ops->copy_host_to_device(static_cast<char*>(ptr) + bias, src, size);
+}
+
+// 从ConnBuffer读取数据到CPU
+status_t ConnBuffer::readToCpu(void* dest, size_t size, size_t bias) {
+    if (bias + size > buffer_size) {
+      logError("Invalid data bias and size");
+      return status_t::ERROR;
+    }
+    if (mem_ops->get_MemoryType() == MemoryType::CPU){
+      memcpy(dest, static_cast<char*>(ptr), size);
+      return status_t::SUCCESS;
+    }
+    return mem_ops->copy_device_to_host(dest, static_cast<char*>(ptr) + bias, size);
+}
+
+// 从GPU向ConnBuffer写入数据
+status_t ConnBuffer::writeFromGpu(void* src, size_t size, size_t bias) {
+    if (bias + size > buffer_size) {
+      logError("Invalid data bias and size");
+      return status_t::ERROR;
+    }
+    if (mem_ops->get_MemoryType() == MemoryType::CPU){
+      mem_ops->copy_device_to_host(static_cast<char*>(ptr) + bias, src, size);
+      return status_t::SUCCESS;
+    }
+    return mem_ops->copy_device_to_device(static_cast<char*>(ptr) + bias, src, size);
+}
+
+    // 从ConnBuffer读取数据到GPU
+status_t ConnBuffer::readToGpu(void* dest, size_t size, size_t bias) {
+    if (bias + size > buffer_size) {
+      logError("Invalid data bias and size");
+      return status_t::ERROR;
+    }
+    if (mem_ops->get_MemoryType() == MemoryType::CPU){
+      mem_ops->copy_host_to_device(dest, static_cast<char*>(ptr) + bias, size);
+      return status_t::SUCCESS;
+    }
+    return mem_ops->copy_device_to_device(dest, static_cast<char*>(ptr) + bias, size);
+}
 
 }
 

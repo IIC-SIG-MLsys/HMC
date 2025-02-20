@@ -23,11 +23,11 @@ public:
     RDMAEndpoint(void *buffer, size_t buffer_size);
     status_t closeEndpoint() override;
 
-    status_t sendData(const void* data, size_t size) override;
-    status_t recvData(size_t* flag) override;
+    status_t writeData(size_t data_bias, size_t size) override;
+    status_t readData(size_t data_bias, size_t size) override;
     
-    status_t sendDataNB(const void* data, size_t size);
-    status_t recvDataNB();
+    status_t writeDataNB(size_t data_bias, size_t size);
+    status_t readDataNB(size_t data_bias, size_t size);
 
     status_t pollCompletion(int num_completions_to_process);
 

@@ -15,8 +15,8 @@ class UCXEndpoint : public Endpoint {
 public:
   UCXEndpoint(ucp_conn_h ucx_context, ucp_ep_h ucx_connection);
 
-  status_t sendData(const void* data, size_t size) override;
-  status_t recvData(size_t* flag) override;
+  status_t writeData(size_t data_bias, size_t size) override;
+  status_t readData(size_t data_bias, size_t size) override;
   status_t closeEndpoint() override;
 
   ~UCXEndpoint();

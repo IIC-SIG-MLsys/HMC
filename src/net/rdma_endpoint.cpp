@@ -28,28 +28,50 @@ status_t RDMAEndpoint::closeEndpoint() {
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::sendData(const void* data, size_t size) {
-  // 实现发送数据逻辑
-  sendDataNB(data, size);
-  sync();
+status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
+  // 实现写入远端数据逻辑
+  if (data_bias + size > buffer_size) {
+    logError("Invalid data bias and size");
+    return status_t::ERROR;
+  }
+  if (writeDataNB(data_bias, size) != status_t::SUCCESS) {
+    logError("Error for post_write");
+      return status_t::ERROR;
+  }
+  if (pollCompletion(1) != status_t::SUCCESS) {
+    logError("Error for waiting writeData finished");
+    return status_t::ERROR;
+  }
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::recvData(size_t* flag) {
-  // 实现接收数据逻辑
-  recvDataNB();
-  sync();
+status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
+  // 实现读取远端数据逻辑
+  if (data_bias + size > buffer_size) {
+    logError("Invalid data bias and size");
+    return status_t::ERROR;
+  }
+  if (readDataNB(data_bias, size) != status_t::SUCCESS) {
+    logError("Error for post_read");
+      return status_t::ERROR;
+  }
+  if (pollCompletion(1) != status_t::SUCCESS) {
+    logError("Error for waiting writeData finished");
+    return status_t::ERROR;
+  }
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::sendDataNB(const void* data, size_t size) {
-  // 实现发送数据逻辑
-  return status_t::SUCCESS;
+status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
+  void* localAddr = static_cast<char *>(buffer) + data_bias;
+  void* remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  return postWrite(localAddr, remoteAddr, size, buffer_mr, remote_metadata_attr.key, true);
 }
 
-status_t RDMAEndpoint::recvDataNB() {
-  // 实现接收数据逻辑
-  return status_t::SUCCESS;
+status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size) {
+  void* localAddr = static_cast<char *>(buffer) + data_bias;
+  void* remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  return postRead(localAddr, remoteAddr, size, buffer_mr, remote_metadata_attr.key, true);
 }
 
 status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
@@ -88,7 +110,7 @@ status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
     }
 
     // 分配足够的空间来存储多个完成事件
-    const int max_wcs = 10; // 可根据实际情况调整大小
+    const int max_wcs = cq_capacity; // 可根据实际情况调整大小
     std::vector<struct ibv_wc> wcs(max_wcs);
 
     int total_processed = 0;

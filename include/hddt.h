@@ -48,17 +48,15 @@ public:
   size_t buffer_size;
   Memory *mem_ops = nullptr;
 
-  ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type = MemoryType::DEFAULT) : buffer_size(buffer_size) {
-    mem_ops = new Memory(1, mem_type);
-    mem_ops->allocate_peerable_buffer(&ptr, buffer_size);
-  }
-
+  ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type = MemoryType::DEFAULT);
   // buffer必须在首次分配，并且不允许重新分配，否则指针发生改变，会导致通信的缓冲区失效
 
-  ~ConnBuffer() {
-    mem_ops->free_buffer(ptr);
-    mem_ops->free();
-  }
+  status_t writeFromCpu(void* src, size_t size, size_t bias = 0);
+  status_t readToCpu(void* dest, size_t size, size_t bias = 0);
+  status_t writeFromGpu(void* src, size_t size, size_t bias = 0);
+  status_t readToGpu(void* src, size_t size, size_t bias = 0);
+
+  ~ConnBuffer();
 };
 
 enum class ConnType { RDMA, UCX };
@@ -72,8 +70,8 @@ private:
 public:
   Communicator(std::shared_ptr<ConnBuffer> buffer);
 
-  status_t sendData(uint32_t node_rank, size_t ptr_bias, size_t size);
-  status_t recvData(uint32_t node_rank, size_t* recv_flag);
+  status_t writeTo(uint32_t node_rank, size_t ptr_bias, size_t size);
+  status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size);
 
   status_t connectTo(uint32_t node_rank, ConnType connType);
   status_t initServer(std::string ip, uint16_t port, ConnType serverType);

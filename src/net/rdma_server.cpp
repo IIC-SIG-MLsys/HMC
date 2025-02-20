@@ -200,6 +200,36 @@ status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint){
   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
   struct ibv_sge send_sge, recv_sge;
 
+  // 接收远程的元数据
+  memset(&recv_wr, 0, sizeof(recv_wr));
+  memset(&recv_sge, 0, sizeof(recv_sge));
+
+  recv_sge.addr = (uint64_t) & endpoint->remote_metadata_attr;
+  recv_sge.length = sizeof(endpoint->remote_metadata_attr);
+  recv_sge.lkey = endpoint->remote_metadata_mr->lkey;
+
+  memset(&recv_wr, 0, sizeof(recv_wr));
+  recv_wr.wr_id = 0;
+  recv_wr.sg_list = &recv_sge;
+  recv_wr.num_sge = 1;
+
+  /* 由于需要先准备好recv才能接受对端发送的内容，所以需要有一方等待对方准备好接收消息 */
+  // 发布接收请求
+  if (ibv_post_recv(endpoint->qp, &recv_wr, &bad_recv_wr)) {
+    logError(
+        "Server::server_send_metadata_to_newconnection: Failed to post recv");
+    return status_t::ERROR;
+  }
+
+  // 等待接收完成
+  if (endpoint->pollCompletion(1) != status_t::SUCCESS) {
+      logError("Client::client_exchange_metadata: Failed to complete metadata "
+              "exchange");
+      return status_t::ERROR;
+  }
+
+  std::this_thread::sleep_for(
+            std::chrono::milliseconds(1000)); // 发送之前应该等待一下，等待对方已经准备好接收事件。
   // 发送localmeta到远程
   memset(&send_wr, 0, sizeof(send_wr));
   memset(&send_sge, 0, sizeof(send_sge));
@@ -222,32 +252,6 @@ status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint){
   }
 
   // 等待发送完成
-  if (endpoint->pollCompletion(1) != status_t::SUCCESS) {
-    logError("Server::exchange_metadata: Failed to complete metadata exchange");
-    return status_t::ERROR;
-  }
-
-  // 接收远程的元数据
-  memset(&recv_wr, 0, sizeof(recv_wr));
-  memset(&recv_sge, 0, sizeof(recv_sge));
-
-  recv_sge.addr = (uint64_t) & endpoint->remote_metadata_attr;
-  recv_sge.length = sizeof(endpoint->remote_metadata_attr);
-  recv_sge.lkey = endpoint->remote_metadata_mr->lkey;
-
-  memset(&recv_wr, 0, sizeof(recv_wr));
-  recv_wr.wr_id = 0;
-  recv_wr.sg_list = &recv_sge;
-  recv_wr.num_sge = 1;
-
-  // 发布接收请求
-  if (ibv_post_recv(endpoint->qp, &recv_wr, &bad_recv_wr)) {
-    logError(
-        "Server::server_send_metadata_to_newconnection: Failed to post recv");
-    return status_t::ERROR;
-  }
-
-  // 等待接收和发送完成
   if (endpoint->pollCompletion(1) != status_t::SUCCESS) {
       logError("Client::client_exchange_metadata: Failed to complete metadata "
               "exchange");

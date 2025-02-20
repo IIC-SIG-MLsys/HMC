@@ -24,8 +24,8 @@ public:
     Endpoint() = default;
     virtual ~Endpoint() = default;
 
-    virtual status_t sendData(const void* data, size_t size) = 0;
-    virtual status_t recvData(size_t* flag) = 0;
+    virtual status_t writeData(size_t data_bias, size_t size) = 0;
+    virtual status_t readData(size_t data_bias, size_t size) = 0;
     virtual status_t closeEndpoint() = 0;
 
     EndpointType role;

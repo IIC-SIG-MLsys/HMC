@@ -157,7 +157,10 @@ std::unique_ptr<Endpoint> RDMAClient::connect(const std::string& ip, uint16_t po
 
 status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint){
     /** buffer 的元信息交换 **/
-    // 接收服务器的元数据
+
+    std::this_thread::sleep_for(
+            std::chrono::milliseconds(1000)); // 发送之前应该等待一下，等待对方已经准备好接收事件。
+    // 接收服务器的元数据：发送前先准备一个接收，因为对面是阻塞先收后发。
     struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
     struct ibv_sge recv_sge;
 
@@ -200,7 +203,7 @@ status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint){
         logError("Client::client_exchange_metadata: Failed to post send");
         return status_t::ERROR;
     }
-
+    
     // 等待接收和发送完成
     if (endpoint->pollCompletion(2) != status_t::SUCCESS) {
         logError("Client::client_exchange_metadata: Failed to complete metadata "
