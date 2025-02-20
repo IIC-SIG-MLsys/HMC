@@ -11,7 +11,7 @@ RDMAServer::RDMAServer(std::shared_ptr<ConnBuffer> buffer, std::shared_ptr<ConnM
 
 RDMAServer::~RDMAServer(){}
 
-status_t RDMAServer::listen(const std::string& ip, uint16_t port) {
+status_t RDMAServer::listen(std::string ip, uint16_t port) {
   setup_signal_handler(); // 退出信号监控
   
   int ret = -1;
@@ -77,9 +77,9 @@ status_t RDMAServer::listen(const std::string& ip, uint16_t port) {
           continue;
         }
         logDebug("endpoint cm_id %p", cm_event->id);
-        logDebug("endpoint cm_id %p", cm_event->id->verbs);
         std::unique_ptr<hddt::Endpoint> ep = handleConnection(cm_event->id);
-        conn_manager->_addEndpoint(ip, port, std::move(ep));
+        conn_manager->_addEndpoint(ip, std::move(ep));
+        // conn_manager->_printEndpointMap();
         rdma_ack_cm_event(cm_event);  /* 注意：ack_cm_event会消耗掉这个事件，使得内部的部分内容失效，比如上下文verbs,所以一定要处理完之后再ack */
         // handleConnection的时候，内部会处理一个链接建立完成事件
       } else if(cm_event->event == RDMA_CM_EVENT_DISCONNECTED) {
@@ -90,8 +90,8 @@ status_t RDMAServer::listen(const std::string& ip, uint16_t port) {
           logError("Server::Start: Failed to acknowledge cm event");
           continue;
         }
-        conn_manager->_removeEndpoint(recv_ip, recv_port);
-        logInfo("Disconnect the conn.");
+        conn_manager->_removeEndpoint(recv_ip);
+        // conn_manager->_printEndpointMap();
       } else {
         rdma_ack_cm_event(cm_event); /* ack anyway */
       }

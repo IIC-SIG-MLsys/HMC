@@ -9,7 +9,7 @@ namespace hddt {
 RDMAClient::RDMAClient(std::shared_ptr<ConnBuffer> buffer, int max_retry_times, int retry_delay_ms) : buffer(buffer), max_retry_times(max_retry_times), retry_delay_ms(retry_delay_ms) {}
 RDMAClient::~RDMAClient(){};
 
-std::unique_ptr<Endpoint> RDMAClient::connect(const std::string& ip, uint16_t port) {
+std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     setup_signal_handler(); // 退出信号监控
 
     int ret = -1;

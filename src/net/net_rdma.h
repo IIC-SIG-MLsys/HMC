@@ -93,7 +93,7 @@ public:
     RDMAServer(std::shared_ptr<ConnBuffer> buffer, std::shared_ptr<ConnManager> conn_manager);
     ~RDMAServer();
 
-    status_t listen(const std::string& ip, uint16_t port) override;
+    status_t listen(std::string ip, uint16_t port) override;
 
     std::unique_ptr<Endpoint> handleConnection(rdma_cm_id *id);
     status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint);
@@ -109,7 +109,7 @@ public:
     RDMAClient(std::shared_ptr<ConnBuffer> buffer, int max_retry_times = 10, int retry_delay_ms = 1000);
     ~RDMAClient();
 
-    std::unique_ptr<Endpoint> connect(const std::string& ip, uint16_t port);
+    std::unique_ptr<Endpoint> connect(std::string ip, uint16_t port);
 
     status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint>& ep);
 private:

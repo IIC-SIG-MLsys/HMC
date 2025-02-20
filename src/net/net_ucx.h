@@ -29,8 +29,8 @@ class UCXServer : public Server {
 public:
   UCXServer(std::shared_ptr<ConnManager> conn_manager);
 
-  status_t listen(const std::string& ip, uint16_t port) override;
-  std::unique_ptr<Endpoint> handleConnection(const std::string& ip, uint16_t port);
+  status_t listen(std::string ip, uint16_t port) override;
+  std::unique_ptr<Endpoint> handleConnection(std::string ip, uint16_t port);
 
   ~UCXServer();
 private:
@@ -42,7 +42,7 @@ private:
 class UCXClient {
 public:
     UCXClient(std::shared_ptr<ConnBuffer> buffer);
-    std::unique_ptr<Endpoint> connect(const std::string& ip, uint16_t port);
+    std::unique_ptr<Endpoint> connect(std::string ip, uint16_t port);
 
     ~UCXClient();
 private:

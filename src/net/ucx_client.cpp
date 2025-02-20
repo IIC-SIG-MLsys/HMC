@@ -8,7 +8,7 @@ namespace hddt {
 UCXClient::UCXClient(std::shared_ptr<ConnBuffer> buffer) : buffer(buffer) {}
 UCXClient::~UCXClient(){}
 
-std::unique_ptr<Endpoint> UCXClient::connect(const std::string& ip, uint16_t port) {
+std::unique_ptr<Endpoint> UCXClient::connect(std::string ip, uint16_t port) {
     // 模拟连接过程
     std::cout << "Connecting to " << ip << ":" << port << " using UCX..." << std::endl;
 

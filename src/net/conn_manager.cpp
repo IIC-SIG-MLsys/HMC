@@ -22,7 +22,6 @@ std::unique_ptr<Server> createServer(ConnType serverType,std::shared_ptr<ConnBuf
 }
 
 ConnManager::ConnManager(std::shared_ptr<ConnBuffer> buffer) : buffer(buffer) {
-    logDebug("～conn constructor %d", server_thread.joinable());
 }
 
 status_t ConnManager::initiateServer(std::string ip, uint16_t port, ConnType serverType) {
@@ -47,7 +46,7 @@ status_t ConnManager::initiateServer(std::string ip, uint16_t port, ConnType ser
     return status_t::SUCCESS;
 };
 
-status_t ConnManager::initiateConnectionAsClient(const std::string& targetIp, uint16_t targetPort, ConnType clientType) {
+status_t ConnManager::initiateConnectionAsClient(std::string targetIp, uint16_t targetPort, ConnType clientType) {
     std::unique_ptr<Endpoint> endpoint;
 
     switch (clientType) {
@@ -70,26 +69,26 @@ status_t ConnManager::initiateConnectionAsClient(const std::string& targetIp, ui
     }
 
     std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-    auto key = std::make_pair(targetIp, targetPort);
-    endpoint_map[key] = std::move(endpoint);
+    endpoint_map[targetIp] = std::move(endpoint);
 
     return status_t::SUCCESS;
 }
 
-void ConnManager::_addEndpoint(const std::string& ip, uint16_t port, std::unique_ptr<Endpoint> endpoint) {
+void ConnManager::_addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint) {
     if (endpoint) {
         std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-        auto key = std::make_pair(ip, port);
-        endpoint_map[key] = std::move(endpoint);
+        endpoint_map[ip] = std::move(endpoint);
     }else{
         logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");
     }
 }
 
-void ConnManager::_removeEndpoint(const std::string& ip, uint16_t port) {
+void ConnManager::_removeEndpoint(std::string ip) {
     std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-    auto key = std::make_pair(ip, port);
-    endpoint_map.erase(key);
+    std::unique_ptr<Endpoint> ep = std::move(endpoint_map[ip]); // 删除键值的时候，必须先移交所有权，才能删除
+    this->endpoint_map.erase(ip);
+    ep.reset();
+    // _printEndpointMap();
 }
 
 ConnManager::~ConnManager() {

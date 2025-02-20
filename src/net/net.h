@@ -37,7 +37,7 @@ Client/Server.
 */
 class Client {
 public:
-  virtual std::unique_ptr<Endpoint> connect(const std::string& ip, uint16_t port) = 0;
+  virtual std::unique_ptr<Endpoint> connect(std::string ip, uint16_t port) = 0;
   virtual ~Client() = default;
 };
 
@@ -47,7 +47,7 @@ public:
     virtual ~Server() = default;
 
     // 监听连接请求
-    virtual status_t listen(const std::string& ip, uint16_t port) = 0;
+    virtual status_t listen(std::string ip, uint16_t port) = 0;
 protected:
     std::shared_ptr<ConnManager> conn_manager;
 };
@@ -69,25 +69,32 @@ public:
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
 
   // 客户端发起的连接操作
-  status_t initiateConnectionAsClient(const std::string& targetIp, uint16_t targetPort, ConnType clientType);
+  status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort, ConnType clientType);
 
   // 返回 Endpoint 指针，对象所有权依然在endpoint_map
-  Endpoint* getEndpoint(const std::string& ip, uint16_t port) {
-      auto key = std::make_pair(ip, port);
-      auto it = endpoint_map.find(key);
+  Endpoint* getEndpoint(std::string ip) {
+      auto it = endpoint_map.find(ip);
       if (it == endpoint_map.end()) {
           return nullptr;
       }
       return it->second.get(); // 返回引用
   }
 
-  void _addEndpoint(const std::string& ip, uint16_t port, std::unique_ptr<Endpoint> endpoint);
-  void _removeEndpoint(const std::string& ip, uint16_t port);
+  void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint);
+  void _removeEndpoint(std::string ip);
+
+  void _printEndpointMap() {
+    logInfo("Number of key-value pairs: %lu", endpoint_map.size());
+    std::cout << "Keys in the unordered_map:" << std::endl;
+    for (const auto& pair : endpoint_map) {
+        std::cout << pair.first << std::endl; // 输出键
+    }
+  }
 
   ~ConnManager();
 
 private:
-  std::unordered_map<std::pair<std::string, uint16_t>, std::unique_ptr<Endpoint>, PairHash> endpoint_map;
+  std::unordered_map<std::string, std::unique_ptr<Endpoint>> endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex endpoint_map_mutex; // 用于保护对 endpoint_map 的访问
 

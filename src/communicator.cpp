@@ -48,7 +48,7 @@ status_t Communicator::connectTo(uint32_t node_rank, ConnType connType){
   auto port = addr->second;
 
   // check if already have endpoint
-  Endpoint* ep = conn_manager->getEndpoint(ip, port);
+  Endpoint* ep = conn_manager->getEndpoint(ip);
   if(ep != nullptr) {
     logDebug("Communicator::connect: there already have a endpoint by rank %d", node_rank);
     return status_t::SUCCESS;
@@ -98,7 +98,7 @@ Endpoint* Communicator::_getEndpointByRank(uint32_t node_rank) {
   auto port = addr->second;
 
   // check if already have endpoint
-  Endpoint* ep = conn_manager->getEndpoint(ip, port);
+  Endpoint* ep = conn_manager->getEndpoint(ip);
   if(ep != nullptr) {
     logDebug("Communicator::connect: get endpoint by rank %d success", node_rank);
     return ep;

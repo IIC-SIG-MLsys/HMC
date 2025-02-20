@@ -8,7 +8,9 @@ namespace hddt {
 RDMAEndpoint::RDMAEndpoint(void *buffer, size_t buffer_size):buffer(buffer), buffer_size(buffer_size){};
 
 RDMAEndpoint::~RDMAEndpoint(){
-  closeEndpoint();
+  if (role == EndpointType::Client) {
+    closeEndpoint(); // 目前只有client进行断开操作
+  }
   cleanRdmaResources();
 };
 
