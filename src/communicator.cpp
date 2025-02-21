@@ -123,7 +123,6 @@ Endpoint* Communicator::_getEndpointByRank(uint32_t node_rank) {
   }
 
   auto ip = addr->first;
-  auto port = addr->second;
 
   // check if already have endpoint
   Endpoint* ep = conn_manager->getEndpoint(ip);

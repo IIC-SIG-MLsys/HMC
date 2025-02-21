@@ -17,6 +17,9 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
   int ret = -1;
   struct sockaddr_in sockaddr;
   struct rdma_cm_event *cm_event = nullptr;
+  struct sockaddr_in *client_addr;
+  char recv_ip[INET_ADDRSTRLEN];
+  uint16_t recv_port = 0;
 
   cm_event_channel = rdma_create_event_channel(); // 创建事件通道
   if (!cm_event_channel) {
@@ -42,10 +45,6 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
     goto cleanup;
   }
   logInfo("Server::Start: Server is listening at: %s:%d", ip.c_str(), port);
-
-  struct sockaddr_in *client_addr;
-  char recv_ip[INET_ADDRSTRLEN];
-  uint16_t recv_port;
 
   while (!should_exit()) {
       // 处理请求事件
@@ -111,7 +110,6 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
 
 std::unique_ptr<Endpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
   int ret = -1;
-  status_t sret;
   struct rdma_cm_event *cm_event = nullptr;
 
   logDebug("buffer: buffer->ptr %p, buffer->size %zu", buffer->ptr, buffer->buffer_size);
@@ -195,7 +193,6 @@ std::unique_ptr<Endpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
 }
 
 status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint>& endpoint){
-  status_t sret;
   struct ibv_send_wr send_wr, *bad_send_wr = nullptr;
   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
   struct ibv_sge send_sge, recv_sge;

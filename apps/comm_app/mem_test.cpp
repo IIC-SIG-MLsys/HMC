@@ -1,4 +1,5 @@
 #include <mem.h>
+#include <iostream>
 
 using namespace hddt;
 
@@ -14,7 +15,7 @@ int main() {
 
   char host[1024];
   mem_ops->copy_device_to_host(host, addr, sizeof(data));
-  printf("Server get Data: %s\n", host);
+  std::cout << "Server get Data: " << host << std::endl;
 
   delete mem_ops;
 
