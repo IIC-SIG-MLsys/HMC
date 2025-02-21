@@ -17,7 +17,10 @@ int main() {
   std::cout << "create communicator success " << std::endl;
 
   comm->initServer("192.168.2.240", 2025, ConnType::RDMA);
-  comm->addNewRankAddr(1, "192.168.2.240", 2025);
+  comm->addNewRankAddr(1, "192.168.2.240", 2024);
+  comm->addNewRankAddr(2, "192.168.2.251", 2025);
+
+  int to_rank = 1;
 
   // wait a connection
   sleep(3);
@@ -39,13 +42,13 @@ int main() {
       goto failed;
   }
 
-  comm->writeTo(1, write_bias, data_size); // 写入到对端
+  comm->writeTo(to_rank, write_bias, data_size); // 写入到对端
 
   // 等对端修改数据
   sleep(5);
-
-  comm->readFrom(1, write_bias, data_size); // 从对端读取
-
+  std::cerr << "Start to read." << std::endl;
+  comm->readFrom(to_rank, write_bias, data_size); // 从对端读取
+  
   // 从 ConnBuffer 读取数据 (从缓冲区到 CPU)
   read_status = buffer->readToCpu(read_buffer, data_size, read_bias);
   if (read_status == status_t::SUCCESS) {
@@ -54,6 +57,8 @@ int main() {
       std::cerr << "Failed to read data from buffer." << std::endl;
       goto failed;
   }
+  std::cerr << "Read success." << std::endl;
+
 
 failed:
   sleep(10);

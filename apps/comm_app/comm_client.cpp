@@ -16,18 +16,21 @@ int main() {
   Communicator* comm = new Communicator(buffer);
   std::cout << "create communicator success " << std::endl;
 
-  comm->initServer("192.168.2.240", 2025, ConnType::RDMA);
+  comm->initServer("192.168.2.240", 2024, ConnType::RDMA);
   comm->addNewRankAddr(1, "192.168.2.240", 2025);
+  comm->addNewRankAddr(2, "192.168.2.251", 2025);
 
-  comm->connectTo(1, ConnType::RDMA);
+  int to_rank = 1;
 
-  sleep(5);
+  comm->connectTo(to_rank, ConnType::RDMA);
+
+  sleep(3);
 
   char data_to_write[] = "Hello, AHA!";
   size_t data_size = strlen(data_to_write) + 1; // 包括结尾的 '\0'
   size_t write_bias = 20; // 写入起始偏移量
   char read_buffer[256]; // 确保足够大以容纳读取的数据
-  size_t read_bias = 0; // 读取起始偏移量
+  size_t read_bias = 20; // 读取起始偏移量
   status_t write_status, read_status;
   
   read_status = buffer->readToCpu(read_buffer, data_size, read_bias);
@@ -53,7 +56,7 @@ int main() {
   comm->disConnect(1, ConnType::RDMA);
 
 failed:
-  sleep(10); // server wait
+  sleep(15); // server wait
   delete comm;
   buffer.reset();
   return 1;
