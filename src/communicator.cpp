@@ -20,7 +20,6 @@ status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
     logError("Communicator::connect: endpoint by rank %d does not exist, try to connect", node_rank);
-    return status_t::ERROR;
     
     const std::pair<std::string, uint16_t>* addr_info = _getAddrByRank(node_rank);
     auto ip = addr_info->first;
@@ -38,7 +37,6 @@ status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias, size_t size
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
     logError("Communicator::connect: endpoint by rank %d does not exist, try to connect", node_rank);
-    return status_t::ERROR;
     
     const std::pair<std::string, uint16_t>* addr_info = _getAddrByRank(node_rank);
     auto ip = addr_info->first;
