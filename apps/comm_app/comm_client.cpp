@@ -16,6 +16,7 @@ int main() {
   Communicator* comm = new Communicator(buffer);
   std::cout << "create communicator success " << std::endl;
 
+  comm->initServer("192.168.2.240", 2025, ConnType::RDMA);
   comm->addNewRankAddr(1, "192.168.2.240", 2025);
 
   comm->connectTo(1, ConnType::RDMA);
@@ -47,9 +48,12 @@ int main() {
       goto failed;
   }
   // 等待对端读取
-  sleep(5);
+  sleep(0);
+
+  comm->disConnect(1, ConnType::RDMA);
 
 failed:
+  sleep(10); // server wait
   delete comm;
   buffer.reset();
   return 1;

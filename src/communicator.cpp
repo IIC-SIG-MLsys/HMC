@@ -16,22 +16,38 @@ Communicator::~Communicator() {
   logDebug("finished");
 }
  
-status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size) {
-  // TODO:
+status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType) {
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
-    logError("Communicator::connect: endpoint by rank %d does not exist", node_rank);
+    logError("Communicator::connect: endpoint by rank %d does not exist, try to connect", node_rank);
     return status_t::ERROR;
+    
+    const std::pair<std::string, uint16_t>* addr_info = _getAddrByRank(node_rank);
+    auto ip = addr_info->first;
+    auto port = addr_info->second;
+
+    if (conn_manager->initiateConnectionAsClient(ip, port, connType) != status_t::SUCCESS) {
+      logError("Communicator::connect: connect to %s:%d failed", ip.c_str(), port);
+      return status_t::ERROR;
+    }
   }
   return ep->writeData(ptr_bias, size);
 };
 
-status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias, size_t size) {
-  // TDDO:
+status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType) {
   auto ep = _getEndpointByRank(node_rank);
   if(ep == nullptr) {
-    logError("Communicator::connect: endpoint by rank %d does not exist", node_rank);
+    logError("Communicator::connect: endpoint by rank %d does not exist, try to connect", node_rank);
     return status_t::ERROR;
+    
+    const std::pair<std::string, uint16_t>* addr_info = _getAddrByRank(node_rank);
+    auto ip = addr_info->first;
+    auto port = addr_info->second;
+
+    if (conn_manager->initiateConnectionAsClient(ip, port, connType) != status_t::SUCCESS) {
+      logError("Communicator::connect: connect to %s:%d failed", ip.c_str(), port);
+      return status_t::ERROR;
+    }
   }
 
   return ep->readData(ptr_bias, size);
@@ -60,6 +76,18 @@ status_t Communicator::connectTo(uint32_t node_rank, ConnType connType){
 
 status_t Communicator::initServer(std::string ip, uint16_t port, ConnType serverType){
   return conn_manager->initiateServer(ip, port, serverType);
+};
+
+status_t Communicator::disConnect(uint32_t node_rank, ConnType connType) {
+  auto addr = _getAddrByRank(node_rank);
+  if(addr == nullptr) {
+    logError("Communicator::connect: can't get addr by rank %d", node_rank);
+    return status_t::ERROR;
+  }
+  auto ip = addr->first;
+  
+  conn_manager->_removeEndpoint(ip);
+  return status_t::SUCCESS;
 };
 
 status_t Communicator::addNewRankAddr(uint32_t rank, std::string ip, uint16_t port) {

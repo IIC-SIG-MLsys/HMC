@@ -70,11 +70,12 @@ private:
 public:
   Communicator(std::shared_ptr<ConnBuffer> buffer);
 
-  status_t writeTo(uint32_t node_rank, size_t ptr_bias, size_t size);
-  status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size);
+  status_t writeTo(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType = ConnType::RDMA);
+  status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType = ConnType::RDMA);
 
   status_t connectTo(uint32_t node_rank, ConnType connType);
   status_t initServer(std::string ip, uint16_t port, ConnType serverType);
+  status_t disConnect(uint32_t node_rank, ConnType connType);
 
   // status_t sendDataNB(uint32_t node_rank, uint64_t ptr_bias); // no block
   // status_t recvDataNB(uint32_t node_rank, uint64_t ptr_bias);
