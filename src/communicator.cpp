@@ -29,6 +29,7 @@ status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
       logError("Communicator::connect: connect to %s:%d failed", ip.c_str(), port);
       return status_t::ERROR;
     }
+    ep = _getEndpointByRank(node_rank);
   }
   return ep->writeData(ptr_bias, size);
 };
@@ -46,6 +47,7 @@ status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias, size_t size
       logError("Communicator::connect: connect to %s:%d failed", ip.c_str(), port);
       return status_t::ERROR;
     }
+    ep = _getEndpointByRank(node_rank);
   }
 
   return ep->readData(ptr_bias, size);
