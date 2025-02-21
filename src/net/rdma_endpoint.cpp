@@ -340,42 +340,35 @@ void RDMAEndpoint::cleanRdmaResources() {
     ibv_destroy_qp(qp);
     qp = nullptr;
   }
-
   if (cq) {
     ibv_destroy_cq(cq);
     cq = nullptr;
   }
-
   if (pd) {
     ibv_dealloc_pd(pd);
     pd = nullptr;
   }
-
   if (completion_channel) {
     ibv_destroy_comp_channel(completion_channel);
     completion_channel = nullptr;
   }
-
   if (local_metadata_mr) {
     deRegisterMemory(local_metadata_mr);
     local_metadata_mr = nullptr;
   }
-
   if (remote_metadata_mr) {
     deRegisterMemory(remote_metadata_mr);
     remote_metadata_mr = nullptr;
   }
-
-  if (cm_id) {
-    rdma_destroy_id(cm_id);
-    cm_id = nullptr;
-  }
-
   if (cm_event_channel) {
     rdma_destroy_event_channel(cm_event_channel);
     cm_event_channel = nullptr;
   }
-
+  if (cm_id && cm_id->context) {  // 清理到这里，context失效了，没走rdma_destroy_id,可能有泄漏风险
+    rdma_destroy_id(cm_id);
+    cm_id = nullptr;
+  }
+  
   // 注意 buffer 的清理工作由外部的ConnMemory维护，Endpoint不对buffer进行处理
 }
 

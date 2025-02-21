@@ -91,6 +91,7 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
         }
         conn_manager->_removeEndpoint(recv_ip);
         // conn_manager->_printEndpointMap();
+        logInfo("Disconnect success");
       } else {
         rdma_ack_cm_event(cm_event); /* ack anyway */
       }
