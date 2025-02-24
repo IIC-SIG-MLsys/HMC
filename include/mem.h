@@ -19,7 +19,8 @@ enum class MemoryType {
   CPU,
   NVIDIA_GPU,
   AMD_GPU,
-  CAMBRICON_MLU
+  CAMBRICON_MLU,
+  HUAWEI_ASCEND_NPU
 }; // todo: NVIDIA_GPU_MANAGED, AMD_GPU_MANAGED
 
 MemoryType memory_supported();
