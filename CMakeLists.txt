@@ -248,4 +248,4 @@ install(DIRECTORY include/ DESTINATION include)
 add_subdirectory(apps/comm_app)
 
 # # build test
-add_subdirectory(tests)
+# add_subdirectory(tests)

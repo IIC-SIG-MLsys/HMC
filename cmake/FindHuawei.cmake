@@ -58,6 +58,14 @@ if(HUAWEI_INCLUDE_DIRS AND HUAWEI_LIBRARIES AND HUAWEI_HAL_LIBRARIES)
     message(STATUS "  ACL library: ${HUAWEI_ACL_LIBRARY}")
     message(STATUS "  AscendCL library: ${ASCENDCL_LIBRARY}")
     message(STATUS "  HAL library: ${HUAWEI_HAL_LIBRARIES}")
+
+    # # Check if ASCEND_HOME environment variable is set
+    if(NOT DEFINED ENV{ASCEND_HOME})
+        message(FATAL_ERROR "The environment variable ASCEND_HOME is not set. Please set it to the root directory of your Huawei Ascend installation.")
+    else()
+        message(STATUS "Using ASCEND_HOME: $ENV{ASCEND_HOME}")
+    endif()
+
 else()
     set(HUAWEI_FOUND FALSE)
     message(STATUS "Huawei Ascend Toolkit not found.")
@@ -76,11 +84,4 @@ else()
 endif()
 # Mark variables as advanced
 mark_as_advanced(HUAWEI_INCLUDE_DIRS HUAWEI_LIBRARIES HUAWEI_HAL_LIBRARIES)
-
-# Check if ASCEND_HOME environment variable is set
-if(NOT DEFINED ENV{ASCEND_HOME})
-    message(FATAL_ERROR "The environment variable ASCEND_HOME is not set. Please set it to the root directory of your Huawei Ascend installation.")
-else()
-    message(STATUS "Using ASCEND_HOME: $ENV{ASCEND_HOME}")
-endif()
 

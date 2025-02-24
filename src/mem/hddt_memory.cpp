@@ -12,8 +12,6 @@ status_t Memory::free() { return this->memoryClass->free(); }
 
 // create memory class according to memory type
 std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
-  logError("[DEBUG] createMemoryClass() called with mem_type={}",
-           static_cast<int>(mem_type));
   switch (mem_type) {
   case MemoryType::CPU:
     return std::make_unique<HostMemory>(this->hddtDeviceId,
@@ -31,7 +29,6 @@ std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
     return std::make_unique<HuaweiMemory>(this->hddtDeviceId,
                                           this->hddtMemoryType);
   default:
-    logError("[ERROR] Invalid memory type: {}", static_cast<int>(mem_type));
     return nullptr;
   }
 }
@@ -76,9 +73,6 @@ int Memory::get_DeviceId() { return this->hddtDeviceId; }
 // reset device id and memory type
 status_t Memory::set_DeviceId_and_MemoryType(int device_id,
                                              MemoryType mem_type) {
-  logError("[DEBUG] Setting device_id={}, memory_type={}", this->hddtDeviceId,
-           static_cast<int>(this->hddtMemoryType));
-
   if (mem_type == MemoryType::DEFAULT) { // 未指定mem_type, 则根据系统决定
     this->hddtMemoryType = MemoryType::CPU;
 
@@ -126,8 +120,6 @@ status_t Memory::set_DeviceId_and_MemoryType(int device_id,
     this->hddtMemoryType = mem_type;
   }
   this->hddtDeviceId = device_id;
-  logError("[DEBUG] Setting device_id %d, memory_type %d", this->hddtDeviceId,
-           static_cast<int>(this->hddtMemoryType));
   this->memoryClass = this->createMemoryClass(this->hddtMemoryType);
   this->memoryClass->init();
 

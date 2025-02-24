@@ -7,18 +7,25 @@ unset(MPI_CXX_LIBRARY CACHE)
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64")
     message(STATUS "Detected x86_64 architecture, setting MPI paths for Ubuntu")
     find_path(MPI_INCLUDE_DIR
-        NAMES mpi.h
-        PATHS /usr/lib/x86_64-linux-gnu/openmpi/include
-        PATH_SUFFIXES openmpi
+    NAMES mpi.h
+    HINTS /usr/lib/x86_64-linux-gnu/openmpi/include
+    PATHS /usr/lib/x86_64-linux-gnu/openmpi/include
+    PATH_SUFFIXES openmpi
     )
+
     find_library(MPI_LIBRARY
-        NAMES mpi
-        PATHS /usr/lib/x86_64-linux-gnu/openmpi/lib
+    NAMES mpi
+    HINTS /usr/lib/x86_64-linux-gnu/openmpi/lib
+    PATHS /usr/lib/x86_64-linux-gnu/openmpi/lib
     )
-    find_library(MPI_CXX_LIBRARY
-	NAMES mpi_cxx
-	PATHS /usr/lib/x86_64-linux-gnu/openmpi/lib
-    )
+
+    if(MPI_INCLUDE_DIR AND MPI_LIBRARY)
+        message(STATUS "Found MPI: includes in ${MPI_INCLUDE_DIR}, libraries in ${MPI_LIBRARY}")
+        mark_as_advanced(MPI_INCLUDE_DIR MPI_LIBRARY)
+    else()
+        message(FATAL_ERROR "Could not find MPI. Please make sure MPI is installed and properly configured.")
+    endif()
+
 elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
     message(STATUS "Detected aarch64 architecture, setting MPI paths for OpenEuler")
     find_path(MPI_INCLUDE_DIR
@@ -33,14 +40,17 @@ elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64")
 	NAMES mpi_cxx
 	PATHS /usr/lib64/openmpi/lib
     )
+
+    # 检查是否找到 MPI
+    if(MPI_INCLUDE_DIR AND MPI_LIBRARY AND MPI_CXX_LIBRARY)
+        message(STATUS "Found MPI: includes in ${MPI_INCLUDE_DIR}, libraries in ${MPI_LIBRARY}, CXX library in ${MPI_CXX_LIBRARY}")
+        mark_as_advanced(MPI_INCLUDE_DIR MPI_LIBRARY MPI_CXX_LIBRARY)
+    else()
+        message(FATAL_ERROR "Could not find MPI or MPI C++ library. Please make sure MPI is installed and properly configured.")
+    endif()
+    
 else()
     message(FATAL_ERROR "Unsupported architecture for MPI detection: ${CMAKE_SYSTEM_PROCESSOR}")
 endif()
 
-# 检查是否找到 MPI
-if(MPI_INCLUDE_DIR AND MPI_LIBRARY AND MPI_CXX_LIBRARY)
-    message(STATUS "Found MPI: includes in ${MPI_INCLUDE_DIR}, libraries in ${MPI_LIBRARY}, CXX library in ${MPI_CXX_LIBRARY}")
-    mark_as_advanced(MPI_INCLUDE_DIR MPI_LIBRARY MPI_CXX_LIBRARY)
-else()
-    message(FATAL_ERROR "Could not find MPI or MPI C++ library. Please make sure MPI is installed and properly configured.")
-endif()
+

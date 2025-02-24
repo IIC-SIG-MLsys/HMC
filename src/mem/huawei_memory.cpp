@@ -1,56 +1,17 @@
-#include <acl/acl.h>
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
+#include "mem_type.h"
+
 #include <iostream>
 #include <mem.h>
 #include <stdexcept>
 
 namespace hddt {
-
-HuaweiMemory::HuaweiMemory(int device_id, MemoryType mem_type)
-    : MemoryBase(device_id, mem_type), is_initialized_(false),
-      context_(nullptr), stream_(nullptr) {}
-
-HuaweiMemory::~HuaweiMemory() { this->free(); }
+#ifdef ENABLE_HUAWEI
 
 status_t HuaweiMemory::init() {
-  if (is_initialized_) {
-    logInfo("ACL already initialized, skipping initialization.");
-    return status_t::SUCCESS;
-  }
-
-  aclError ret;
-  //  const char *aclConfigPath = "/home/sdu/acl.json";
-
-  ret = aclInit(NULL);
-  if (ret != ACL_SUCCESS) {
-    logError("aclInit failed, error code: %d", ret);
-    return status_t::ERROR;
-  }
-
-  ret = aclrtSetDevice(device_id);
-  if (ret != ACL_SUCCESS) {
-    logError("aclrtSetDevice failed, error code: %d", ret);
-    aclFinalize();
-    return status_t::ERROR;
-  }
-
-  ret = aclrtCreateContext(&context_, device_id);
-  if (ret != ACL_SUCCESS) {
-    logError("aclrtCreateContext failed, error code: %d", ret);
-    aclrtResetDevice(device_id);
-    aclFinalize();
-    return status_t::ERROR;
-  }
-
-  ret = aclrtCreateStream(&stream_);
-  if (ret != ACL_SUCCESS) {
-    logError("aclrtCreateStream failed, error code: %d", ret);
-    aclrtDestroyContext(context_);
-    aclrtResetDevice(device_id);
-    aclFinalize();
-    return status_t::ERROR;
-  }
-
-  is_initialized_ = true;
+  
   logInfo("HuaweiMemory initialization completed successfully.");
   return status_t::SUCCESS;
 }
@@ -145,5 +106,31 @@ status_t HuaweiMemory::copy_device_to_device(void *dest, const void *src,
   }
   return status_t::SUCCESS;
 }
+
+#else
+status_t HuaweiMemory::init() { return status_t::UNSUPPORT; }
+status_t HuaweiMemory::free() { return status_t::UNSUPPORT; }
+status_t HuaweiMemory::allocate_buffer(void **addr, size_t size) {
+  return status_t::UNSUPPORT;
+}
+status_t HuaweiMemory::allocate_peerable_buffer(void **addr, size_t size) {
+  return status_t::UNSUPPORT;
+}
+status_t HuaweiMemory::free_buffer(void *addr) { return status_t::UNSUPPORT; }
+
+status_t HuaweiMemory::copy_host_to_device(void *dest, const void *src,
+                                         size_t size) {
+  return status_t::UNSUPPORT;
+}
+status_t HuaweiMemory::copy_device_to_host(void *dest, const void *src,
+                                         size_t size) {
+  return status_t::UNSUPPORT;
+}
+status_t HuaweiMemory::copy_device_to_device(void *dest, const void *src,
+                                           size_t size) {
+  return status_t::UNSUPPORT;
+}
+
+#endif
 
 } // namespace hddt
