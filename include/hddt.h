@@ -22,19 +22,19 @@
 #include "mem.h"
 #include "status.h"
 
-#include <iostream>
-#include <thread>
-#include <memory>
-#include <cstdlib>
-#include <stdbool.h>
-#include <stddef.h>
-#include <stdint.h>
-#include <unistd.h>
-#include <utility> // For std::pair
-#include <unordered_map>
 #include <atomic>
 #include <chrono>
 #include <csignal> // For signal
+#include <cstdlib>
+#include <iostream>
+#include <memory>
+#include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
+#include <thread>
+#include <unistd.h>
+#include <unordered_map>
+#include <utility> // For std::pair
 
 namespace hddt {
 
@@ -48,13 +48,14 @@ public:
   size_t buffer_size;
   Memory *mem_ops = nullptr;
 
-  ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type = MemoryType::DEFAULT);
+  ConnBuffer(int device_id, size_t buffer_size,
+             MemoryType mem_type = MemoryType::DEFAULT);
   // buffer必须在首次分配，并且不允许重新分配，否则指针发生改变，会导致通信的缓冲区失效
 
-  status_t writeFromCpu(void* src, size_t size, size_t bias = 0);
-  status_t readToCpu(void* dest, size_t size, size_t bias = 0);
-  status_t writeFromGpu(void* src, size_t size, size_t bias = 0);
-  status_t readToGpu(void* src, size_t size, size_t bias = 0);
+  status_t writeFromCpu(void *src, size_t size, size_t bias = 0);
+  status_t readToCpu(void *dest, size_t size, size_t bias = 0);
+  status_t writeFromGpu(void *src, size_t size, size_t bias = 0);
+  status_t readToGpu(void *src, size_t size, size_t bias = 0);
 
   ~ConnBuffer();
 };
@@ -65,13 +66,16 @@ class Communicator {
 private:
   std::unordered_map<uint32_t, std::pair<std::string, uint16_t>> rank_addr_map;
   std::shared_ptr<ConnBuffer> buffer;
-  std::shared_ptr<ConnManager> conn_manager; // must be shared, enable shared obj
+  std::shared_ptr<ConnManager>
+      conn_manager; // must be shared, enable shared obj
 
 public:
   Communicator(std::shared_ptr<ConnBuffer> buffer);
 
-  status_t writeTo(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType = ConnType::RDMA);
-  status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size, ConnType connType = ConnType::RDMA);
+  status_t writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
+                   ConnType connType = ConnType::RDMA);
+  status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size,
+                    ConnType connType = ConnType::RDMA);
 
   status_t connectTo(uint32_t node_rank, ConnType connType);
   status_t initServer(std::string ip, uint16_t port, ConnType serverType);
@@ -85,11 +89,11 @@ public:
   status_t delRankAddr(uint32_t rank);
 
   ~Communicator();
-private:
-  const std::pair<std::string, uint16_t>* _getAddrByRank(uint32_t node_rank);
-  Endpoint* _getEndpointByRank(uint32_t node_rank);
-};
 
+private:
+  const std::pair<std::string, uint16_t> *_getAddrByRank(uint32_t node_rank);
+  Endpoint *_getEndpointByRank(uint32_t node_rank);
+};
 
 } // namespace hddt
 

@@ -11,7 +11,6 @@
 #include <mpi.h>
 #include <netdb.h>
 
-
 #define HOSTNAME_MAX 256
 #define MAX_IP_SIZE 1024
 

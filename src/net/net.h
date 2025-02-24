@@ -4,13 +4,13 @@
 #ifndef HDDT_NET_H
 #define HDDT_NET_H
 
-#include <hddt.h>
 #include "../utils/log.h"
 #include "../utils/signal_handle.h"
+#include <hddt.h>
 
+#include <mutex>
 #include <string>
 #include <utility> // For std::pair
-#include <mutex>
 
 namespace hddt {
 
@@ -21,16 +21,15 @@ Endpoint is high level abstract of comm point.
 */
 class Endpoint {
 public:
-    Endpoint() = default;
-    virtual ~Endpoint() = default;
+  Endpoint() = default;
+  virtual ~Endpoint() = default;
 
-    virtual status_t writeData(size_t data_bias, size_t size) = 0;
-    virtual status_t readData(size_t data_bias, size_t size) = 0;
-    virtual status_t closeEndpoint() = 0;
+  virtual status_t writeData(size_t data_bias, size_t size) = 0;
+  virtual status_t readData(size_t data_bias, size_t size) = 0;
+  virtual status_t closeEndpoint() = 0;
 
-    EndpointType role;
+  EndpointType role;
 };
-
 
 /*
 Client/Server.
@@ -43,23 +42,26 @@ public:
 
 class Server {
 public:
-    Server(std::shared_ptr<ConnManager> conn_manager) : conn_manager(conn_manager) {}
-    virtual ~Server() = default;
+  Server(std::shared_ptr<ConnManager> conn_manager)
+      : conn_manager(conn_manager) {}
+  virtual ~Server() = default;
 
-    // 监听连接请求
-    virtual status_t listen(std::string ip, uint16_t port) = 0;
+  // 监听连接请求
+  virtual status_t listen(std::string ip, uint16_t port) = 0;
+
 protected:
-    std::shared_ptr<ConnManager> conn_manager;
+  std::shared_ptr<ConnManager> conn_manager;
 };
 
 /*
-ConnManager runs a server for recv new Conn and create new QP into a new Endpoint.
-It also run active Connect as a Client.
+ConnManager runs a server for recv new Conn and create new QP into a new
+Endpoint. It also run active Connect as a Client.
 */
 struct PairHash {
-    std::size_t operator()(const std::pair<std::string, uint16_t>& p) const {
-        return std::hash<std::string>()(p.first) ^ (std::hash<uint16_t>()(p.second) << 1);
-    }
+  std::size_t operator()(const std::pair<std::string, uint16_t> &p) const {
+    return std::hash<std::string>()(p.first) ^
+           (std::hash<uint16_t>()(p.second) << 1);
+  }
 };
 
 class ConnManager : public std::enable_shared_from_this<ConnManager> {
@@ -69,15 +71,16 @@ public:
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
 
   // 客户端发起的连接操作
-  status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort, ConnType clientType);
+  status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort,
+                                      ConnType clientType);
 
   // 返回 Endpoint 指针，对象所有权依然在endpoint_map
-  Endpoint* getEndpoint(std::string ip) {
-      auto it = endpoint_map.find(ip);
-      if (it == endpoint_map.end()) {
-          return nullptr;
-      }
-      return it->second.get(); // 返回引用
+  Endpoint *getEndpoint(std::string ip) {
+    auto it = endpoint_map.find(ip);
+    if (it == endpoint_map.end()) {
+      return nullptr;
+    }
+    return it->second.get(); // 返回引用
   }
 
   void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint);
@@ -86,8 +89,8 @@ public:
   void _printEndpointMap() {
     logInfo("Number of key-value pairs: %lu", endpoint_map.size());
     std::cout << "Keys in the unordered_map:" << std::endl;
-    for (const auto& pair : endpoint_map) {
-        std::cout << pair.first << std::endl; // 输出键
+    for (const auto &pair : endpoint_map) {
+      std::cout << pair.first << std::endl; // 输出键
     }
   }
 
@@ -109,6 +112,6 @@ private:
     断开总是由client属性的EP发起的。
  */
 
-}
+} // namespace hddt
 
 #endif

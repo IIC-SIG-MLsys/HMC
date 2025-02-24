@@ -141,4 +141,4 @@ status_t free_gpu_driver() {
   return status_t::SUCCESS;
 }
 
-}
+} // namespace hddt

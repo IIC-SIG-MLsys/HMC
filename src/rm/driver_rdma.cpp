@@ -32,4 +32,4 @@ bool support_rdma() {
   return false;                   // no device supports RDMA
 }
 
-}
+} // namespace hddt

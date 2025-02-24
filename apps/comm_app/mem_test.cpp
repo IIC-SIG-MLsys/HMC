@@ -1,5 +1,5 @@
-#include <mem.h>
 #include <iostream>
+#include <mem.h>
 
 using namespace hddt;
 

@@ -22,5 +22,4 @@ const char *status_to_string(status_t status) {
   }
 }
 
-}
-
+} // namespace hddt

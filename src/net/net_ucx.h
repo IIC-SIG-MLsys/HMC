@@ -7,7 +7,7 @@
 #include "net.h"
 
 #define ucp_conn_h int // TODO: support UCX
-#define ucp_ep_h int 
+#define ucp_ep_h int
 
 namespace hddt {
 
@@ -20,6 +20,7 @@ public:
   status_t closeEndpoint() override;
 
   ~UCXEndpoint();
+
 private:
   ucp_conn_h ucx_context;
   ucp_ep_h ucx_connection;
@@ -33,21 +34,22 @@ public:
   std::unique_ptr<Endpoint> handleConnection(std::string ip, uint16_t port);
 
   ~UCXServer();
+
 private:
   std::string ip = "0.0.0.0";
   uint16_t port = 1234;
 };
 
-
 class UCXClient {
 public:
-    UCXClient(std::shared_ptr<ConnBuffer> buffer);
-    std::unique_ptr<Endpoint> connect(std::string ip, uint16_t port);
+  UCXClient(std::shared_ptr<ConnBuffer> buffer);
+  std::unique_ptr<Endpoint> connect(std::string ip, uint16_t port);
 
-    ~UCXClient();
+  ~UCXClient();
+
 private:
-    std::shared_ptr<ConnBuffer> buffer;
+  std::shared_ptr<ConnBuffer> buffer;
 };
 
-}
+} // namespace hddt
 #endif

@@ -4,8 +4,8 @@
 #ifndef HDDT_DRIVER_H
 #define HDDT_DRIVER_H
 
-#include <hddt.h>
 #include "../utils/log.h"
+#include <hddt.h>
 
 namespace hddt {
 /*
@@ -21,6 +21,6 @@ bool support_rdma();
 
 // TODO: resource manager
 
-}
+} // namespace hddt
 
 #endif

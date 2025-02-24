@@ -16,6 +16,7 @@ cmake ..
 支持的参数
 ```
 -DBUILD_STATIC_LIB=ON # 开启静态库编译
+-DBUILD_PYTHON_MOD=ON # python库
 ```
 
 3. 编译

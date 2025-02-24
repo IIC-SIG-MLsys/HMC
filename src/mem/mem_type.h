@@ -4,8 +4,8 @@
 #ifndef HDDT_MEM_TYPE_H
 #define HDDT_MEM_TYPE_H
 
-#include <mem.h>
 #include "../utils/log.h"
+#include <mem.h>
 
 namespace hddt {
 
@@ -107,6 +107,6 @@ public:
   status_t copy_device_to_device(void *dest, const void *src, size_t size);
 };
 
-}
+} // namespace hddt
 
 #endif

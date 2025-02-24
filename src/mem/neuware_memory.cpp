@@ -1,9 +1,9 @@
 /**
  * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
  */
-#include <mem.h>
-#include "mem_type.h"
 #include "../rm/driver.h"
+#include "mem_type.h"
+#include <mem.h>
 
 namespace hddt {
 
