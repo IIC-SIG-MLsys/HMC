@@ -1,10 +1,8 @@
-/* SPDX-License-Identifier: GPL-2.0 OR BSD-2-Clause */
-/*
- * Copyright 2023 Amazon.com, Inc. or its affiliates. All rights reserved.
- * Copyright 2024 IIC-SIG-MLsys(SDU), jacalau. All rights reserved.
+/**
+ * @copyright Copyright (c) 2025, SDU SPgroup Holding Limited
  */
 
-#include <hddt.h>
+#include "driver.h"
 
 namespace hddt {
 

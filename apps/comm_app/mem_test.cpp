@@ -1,12 +1,12 @@
-#include <hddt.h>
+#include <iostream>
 #include <mem.h>
 
 using namespace hddt;
 
 int main() {
   /* GPU memory test */
-
-  Memory *mem_ops = new Memory(1);
+  // Memory *mem_ops = new Memory(1);
+  Memory *mem_ops = new Memory(1, hddt::MemoryType::AMD_GPU);
   void *addr;
   mem_ops->allocate_buffer(&addr, 1024);
 
@@ -15,9 +15,7 @@ int main() {
 
   char host[1024];
   mem_ops->copy_device_to_host(host, addr, sizeof(data));
-  printf("Server get Data: %s\n", host);
-
-  sleep(2);
+  std::cout << "Server get Data: " << host << std::endl;
 
   delete mem_ops;
 

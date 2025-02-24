@@ -1,3 +1,8 @@
+/**
+ * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ */
+#include "../rm/driver.h"
+#include "mem_type.h"
 #include <mem.h>
 
 namespace hddt {
@@ -12,15 +17,32 @@ status_t NeuwareMemory::free() { return free_gpu_driver(); }
 
 status_t NeuwareMemory::allocate_buffer(void **addr, size_t size) {
   CNresult ret;
+
+  if (this->mem_type != MemoryType::CAMBRICON_MLU) {
+    return status_t::UNSUPPORT;
+  }
+  // logInfo("Allocate memory using cnMalloc.");
+  ret = cnMalloc(&this->mlu_addr, size);
+  if (ret != CN_SUCCESS) {
+    logError("failed to allocate memory %d.", ret);
+    return status_t::ERROR;
+  }
+  *addr = (void *)this->mlu_addr;
+  // todo : dmabuf support : cuMemGetHandleForAddressRange()
+  return status_t::SUCCESS;
+}
+
+status_t NeuwareMemory::allocate_peerable_buffer(void **addr, size_t size) {
+  CNresult ret;
   cn_uint64_t buf_size = (size + ACCEL_PAGE_SIZE - 1) & ~(ACCEL_PAGE_SIZE - 1);
 
   if (this->mem_type != MemoryType::CAMBRICON_MLU) {
     return status_t::UNSUPPORT;
   }
-  logInfo("Allocate memory using cnMalloc.");
+  // logInfo("Allocate memory using cnMallocPeerAble.");
   ret = cnMallocPeerAble(&this->mlu_addr, buf_size);
   if (ret != CN_SUCCESS) {
-    logError("failed to allocate memory.");
+    logError("failed to allocate memory %d.", ret);
     return status_t::ERROR;
   }
   *addr = (void *)this->mlu_addr;
@@ -104,6 +126,9 @@ status_t NeuwareMemory::copy_device_to_device(void *dest, const void *src,
 status_t NeuwareMemory::init() { return status_t::UNSUPPORT; }
 status_t NeuwareMemory::free() { return status_t::UNSUPPORT; }
 status_t NeuwareMemory::allocate_buffer(void **addr, size_t size) {
+  return status_t::UNSUPPORT;
+}
+status_t NeuwareMemory::allocate_peerable_buffer(void **addr, size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t NeuwareMemory::free_buffer(void *addr) { return status_t::UNSUPPORT; }

@@ -122,7 +122,8 @@ endif()
 
 
 # # build src
-include_directories(include)
+include_directories(include) # 向外暴露的头文件
+include_directories(src) # 源文件下的其他头文件
 
 # with rdma
 include(FindRdma)
@@ -212,6 +213,14 @@ if(BUILD_PYTHON_MOD)
     # # pybind
     # git submodule add -b stable ../../pybind/pybind11 extern/pybind11
     # git submodule update --init
+    execute_process(
+        COMMAND git submodule update --init
+        WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
+        RESULT_VARIABLE GIT_SUBMOD_RESULT
+    )
+    if(NOT GIT_SUBMOD_RESULT EQUAL "0")
+        message(FATAL_ERROR "git submodule update --init failed with ${GIT_SUBMOD_RESULT}, please checkout submodules")
+    endif()
     add_subdirectory(extern/pybind11)
     set(PYBIND11_INCLUDE_DIR ${CMAKE_SOURCE_DIR}/extern/pybind11/include)
     include_directories(${PYBIND11_INCLUDE_DIR})
@@ -234,8 +243,9 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/train_cnn)
 # add_subdirectory(apps/simple_inference)
 # add_subdirectory(apps/torch_app)
-add_subdirectory(apps/rdma_app)
+# add_subdirectory(apps/rdma_app)
 # add_subdirectory(apps/coll_app)
+add_subdirectory(apps/comm_app)
 
 # # build test
 add_subdirectory(tests)

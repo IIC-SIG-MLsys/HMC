@@ -18,6 +18,7 @@ cmake ..
 Supported parameters:  
 ```
 -DBUILD_STATIC_LIB=ON # Enable static library compilation
+-DBUILD_PYTHON_MOD=ON # Enable python interface
 ```
 
 3. Build  
