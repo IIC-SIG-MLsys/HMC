@@ -19,8 +19,8 @@ Communicator::~Communicator() {
 
 status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
                                ConnType connType) {
-  auto ep = _getEndpointByRank(node_rank);
-  if (ep == nullptr) {
+
+  if (checkConn(node_rank, connType) != status_t::SUCCESS) {
     logError("Communicator::connect: endpoint by rank %d does not exist, try "
              "to connect",
              node_rank);
@@ -36,15 +36,26 @@ status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
                port);
       return status_t::ERROR;
     }
-    ep = _getEndpointByRank(node_rank);
   }
-  return ep->writeData(ptr_bias, size);
+
+  auto addr = _getAddrByRank(node_rank);
+  if (addr == nullptr) {
+    logError("Communicator::connect: can't get addr by rank %d", node_rank);
+    return status_t::ERROR;
+  }
+  auto ip = addr->first;
+
+  return conn_manager->withEndpoint(
+      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->writeData(ptr_bias, size); // 传递返回状态
+      });
 };
 
 status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias,
                                 size_t size, ConnType connType) {
-  auto ep = _getEndpointByRank(node_rank);
-  if (ep == nullptr) {
+  if (checkConn(node_rank, connType) != status_t::SUCCESS) {
     logError("Communicator::connect: endpoint by rank %d does not exist, try "
              "to connect",
              node_rank);
@@ -60,13 +71,28 @@ status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias,
                port);
       return status_t::ERROR;
     }
-    ep = _getEndpointByRank(node_rank);
   }
 
-  return ep->readData(ptr_bias, size);
+  auto addr = _getAddrByRank(node_rank);
+  if (addr == nullptr) {
+    logError("Communicator::connect: can't get addr by rank %d", node_rank);
+    return status_t::ERROR;
+  }
+  auto ip = addr->first;
+
+  return conn_manager->withEndpoint(
+      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->readData(ptr_bias, size); // 传递返回状态
+      });
 };
 
 status_t Communicator::connectTo(uint32_t node_rank, ConnType connType) {
+  if (checkConn(node_rank, connType) == status_t::SUCCESS) {
+    return status_t::SUCCESS;
+  }
+
   auto addr = _getAddrByRank(node_rank);
   if (addr == nullptr) {
     logError("Communicator::connect: can't get addr by rank %d", node_rank);
@@ -75,14 +101,6 @@ status_t Communicator::connectTo(uint32_t node_rank, ConnType connType) {
 
   auto ip = addr->first;
   auto port = addr->second;
-
-  // check if already have endpoint
-  Endpoint *ep = conn_manager->getEndpoint(ip);
-  if (ep != nullptr) {
-    logDebug("Communicator::connect: there already have a endpoint by rank %d",
-             node_rank);
-    return status_t::SUCCESS;
-  }
 
   // connect to node, create a new Endpoint
   return conn_manager->initiateConnectionAsClient(ip, port, connType);
@@ -103,6 +121,31 @@ status_t Communicator::disConnect(uint32_t node_rank, ConnType connType) {
 
   conn_manager->_removeEndpoint(ip);
   return status_t::SUCCESS;
+};
+
+status_t Communicator::checkConn(uint32_t node_rank, ConnType connType) {
+  auto addr = _getAddrByRank(node_rank);
+  if (addr == nullptr) {
+    logError("Communicator::connect: can't get addr by rank %d", node_rank);
+    return status_t::ERROR;
+  }
+
+  auto ip = addr->first;
+
+  // // check if already have endpoint
+  // Endpoint *ep = conn_manager->getEndpoint(ip);
+  // if (ep != nullptr) {
+  //   logDebug("Communicator::connect: there already have a endpoint by rank
+  //   %d",
+  //            node_rank);
+  //   return status_t::SUCCESS;
+  // }
+
+  return conn_manager->withEndpoint(
+      addr->first,
+      [](Endpoint *ep) -> status_t { // 显式指定返回类型
+        return ep ? status_t::SUCCESS : status_t::ERROR;
+      });
 };
 
 status_t Communicator::addNewRankAddr(uint32_t rank, std::string ip,
@@ -132,26 +175,27 @@ Communicator::_getAddrByRank(uint32_t node_rank) {
   return &it->second;
 };
 
-Endpoint *Communicator::_getEndpointByRank(uint32_t node_rank) {
-  auto addr = _getAddrByRank(node_rank);
-  if (addr == nullptr) {
-    logError("Communicator::connect: can't get addr by rank %d", node_rank);
-    return nullptr;
-  }
+// [discard] 采用conn_manager的withEndpoint管理ep生命周期
+// Endpoint *Communicator::_getEndpointByRank(uint32_t node_rank) {
+//   auto addr = _getAddrByRank(node_rank);
+//   if (addr == nullptr) {
+//     logError("Communicator::connect: can't get addr by rank %d", node_rank);
+//     return nullptr;
+//   }
 
-  auto ip = addr->first;
+//   auto ip = addr->first;
 
-  // check if already have endpoint
-  Endpoint *ep = conn_manager->getEndpoint(ip);
-  if (ep != nullptr) {
-    logDebug("Communicator::connect: get endpoint by rank %d success",
-             node_rank);
-    return ep;
-  }
+//   // check if already have endpoint
+//   Endpoint *ep = conn_manager->getEndpoint(ip);
+//   if (ep != nullptr) {
+//     logDebug("Communicator::connect: get endpoint by rank %d success",
+//              node_rank);
+//     return ep;
+//   }
 
-  logDebug("Communicator::connect: get endpoint by rank %d failed", node_rank);
-  return nullptr;
-};
+//   logDebug("Communicator::connect: get endpoint by rank %d failed",
+//   node_rank); return nullptr;
+// };
 
 /* ConnBuffer */
 

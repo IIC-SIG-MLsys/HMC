@@ -11,7 +11,7 @@ namespace hddt {
 #ifdef ENABLE_HUAWEI
 
 status_t HuaweiMemory::init() {
-  
+
   logInfo("HuaweiMemory initialization completed successfully.");
   return status_t::SUCCESS;
 }
@@ -119,15 +119,15 @@ status_t HuaweiMemory::allocate_peerable_buffer(void **addr, size_t size) {
 status_t HuaweiMemory::free_buffer(void *addr) { return status_t::UNSUPPORT; }
 
 status_t HuaweiMemory::copy_host_to_device(void *dest, const void *src,
-                                         size_t size) {
+                                           size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t HuaweiMemory::copy_device_to_host(void *dest, const void *src,
-                                         size_t size) {
+                                           size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t HuaweiMemory::copy_device_to_device(void *dest, const void *src,
-                                           size_t size) {
+                                             size_t size) {
   return status_t::UNSUPPORT;
 }
 

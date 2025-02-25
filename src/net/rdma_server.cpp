@@ -84,8 +84,9 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
       std::unique_ptr<hddt::Endpoint> ep = handleConnection(cm_event->id);
       conn_manager->_addEndpoint(ip, std::move(ep));
       // conn_manager->_printEndpointMap();
-      rdma_ack_cm_event(cm_event); /* 注意：ack_cm_event会消耗掉这个事件，使得内部的部分内容失效，比如上下文verbs,所以一定要处理完之后再ack
-                                    */
+      rdma_ack_cm_event(
+          cm_event); /* 注意：ack_cm_event会消耗掉这个事件，使得内部的部分内容失效，比如上下文verbs,所以一定要处理完之后再ack
+                      */
       // handleConnection的时候，内部会处理一个链接建立完成事件
     } else if (cm_event->event == RDMA_CM_EVENT_DISCONNECTED) {
       // 断开请求：根据对端的ip信息，清理本地对应的ep

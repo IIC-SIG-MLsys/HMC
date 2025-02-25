@@ -24,7 +24,7 @@ int main() {
 
   comm->connectTo(to_rank, ConnType::RDMA);
 
-  sleep(3);
+  sleep(3); // 等待对端写入数据
 
   char data_to_write[] = "Hello, AHA!";
   size_t data_size = strlen(data_to_write) + 1; // 包括结尾的 '\0'
@@ -50,13 +50,14 @@ int main() {
     std::cerr << "Failed to write data to buffer." << std::endl;
     goto failed;
   }
+
   // 等待对端读取
   sleep(0);
 
   comm->disConnect(1, ConnType::RDMA);
 
 failed:
-  sleep(15); // server wait
+  sleep(5); // wait server 的远程读活动
   delete comm;
   buffer.reset();
   return 1;

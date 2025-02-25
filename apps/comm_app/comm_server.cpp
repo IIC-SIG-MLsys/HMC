@@ -23,7 +23,12 @@ int main() {
   int to_rank = 1;
 
   // wait a connection
-  sleep(3);
+  while (1) {
+    if (comm->checkConn(1, ConnType::RDMA) == status_t::SUCCESS) {
+      break;
+    }
+    sleep(1);
+  }
 
   // 示例数据：一个简单的字符串
   char data_to_write[] = "Hello, RDMA!";
@@ -60,7 +65,6 @@ int main() {
   std::cerr << "Read success." << std::endl;
 
 failed:
-  sleep(10);
   delete comm;
   buffer.reset();
   return 1;
