@@ -66,6 +66,11 @@ struct PairHash {
 
 class ConnManager : public std::enable_shared_from_this<ConnManager> {
 public:
+  struct EndpointEntry {
+    std::unique_ptr<Endpoint> endpoint;
+    std::mutex mutex;
+  };
+
   ConnManager(std::shared_ptr<ConnBuffer> buffer);
   // shared ptr 不能在构造函数里面shared from this,需要构造完成后，单独初始化
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
@@ -74,13 +79,36 @@ public:
   status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort,
                                       ConnType clientType);
 
+  // [discard] 返回指针的方式，无法保证对象的并发安全
   // 返回 Endpoint 指针，对象所有权依然在endpoint_map
-  Endpoint *getEndpoint(std::string ip) {
-    auto it = endpoint_map.find(ip);
-    if (it == endpoint_map.end()) {
-      return nullptr;
+  // Endpoint *getEndpoint(std::string ip) {
+  //   auto it = endpoint_map.find(ip);
+  //   if (it == endpoint_map.end()) {
+  //     return nullptr;
+  //   }
+  //   return it->second.get(); // 返回引用
+  // }
+
+  // 安全访问接口
+  template <typename F> status_t withEndpoint(const std::string &ip, F &&func) {
+    // 第一阶段：查找条目
+    EndpointEntry *entry = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(endpoint_map_mutex);
+      auto it = endpoint_map.find(ip);
+      if (it == endpoint_map.end()) {
+        return status_t::NOT_FOUND; // entry未找到
+      }
+      entry = &it->second;
     }
-    return it->second.get(); // 返回引用
+
+    // 第二阶段：锁定并执行操作
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    if (!entry->endpoint) {
+      return status_t::ERROR; // endpoint未找到
+    }
+
+    return func(entry->endpoint.get()); // 传递返回值
   }
 
   void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint);
@@ -97,7 +125,7 @@ public:
   ~ConnManager();
 
 private:
-  std::unordered_map<std::string, std::unique_ptr<Endpoint>> endpoint_map;
+  std::unordered_map<std::string, EndpointEntry> endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex endpoint_map_mutex; // 用于保护对 endpoint_map 的访问
 

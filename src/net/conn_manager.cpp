@@ -73,7 +73,10 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
   }
 
   std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-  endpoint_map[targetIp] = std::move(endpoint);
+  // endpoint_map[targetIp] = std::move(endpoint);
+  auto &entry = endpoint_map[targetIp];
+  std::lock_guard<std::mutex> entry_lock(entry.mutex);
+  entry.endpoint = std::move(endpoint);
 
   return status_t::SUCCESS;
 }
@@ -82,19 +85,35 @@ void ConnManager::_addEndpoint(std::string ip,
                                std::unique_ptr<Endpoint> endpoint) {
   if (endpoint) {
     std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-    endpoint_map[ip] = std::move(endpoint);
+    auto &entry = endpoint_map[ip];
+    std::lock_guard<std::mutex> entry_lock(entry.mutex);
+    entry.endpoint = std::move(endpoint);
+    // endpoint_map[ip] = std::move(endpoint);
   } else {
     logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");
   }
 }
 
 void ConnManager::_removeEndpoint(std::string ip) {
-  std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-  std::unique_ptr<Endpoint> ep =
-      std::move(endpoint_map[ip]); // 删除键值的时候，必须先移交所有权，才能删除
-  this->endpoint_map.erase(ip);
-  ep.reset();
-  // _printEndpointMap();
+  // std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
+  // std::unique_ptr<Endpoint> ep = std::move(endpoint_map[ip]); //
+  // 删除键值的时候，必须先移交所有权，才能删除 this->endpoint_map.erase(ip);
+  // ep.reset();
+  // // _printEndpointMap();
+
+  std::unique_ptr<Endpoint> to_delete;
+  // 两阶段删除保证
+  {
+    std::lock_guard<std::mutex> lock(endpoint_map_mutex);
+    auto it = endpoint_map.find(ip);
+    if (it == endpoint_map.end())
+      return;
+    // 锁定条目后转移所有权
+    std::lock_guard<std::mutex> entry_lock(it->second.mutex);
+    to_delete = std::move(it->second.endpoint);
+    endpoint_map.erase(it);
+  }
+  // 在此处同步等待资源释放
 }
 
 ConnManager::~ConnManager() {
