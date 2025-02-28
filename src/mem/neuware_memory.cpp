@@ -15,7 +15,7 @@ status_t NeuwareMemory::init() { return init_gpu_driver(this->device_id); }
 
 status_t NeuwareMemory::free() { return free_gpu_driver(); }
 
-status_t NeuwareMemory::allocate_buffer(void **addr, size_t size) {
+status_t NeuwareMemory::allocateBuffer(void **addr, size_t size) {
   CNresult ret;
 
   if (this->mem_type != MemoryType::CAMBRICON_MLU) {
@@ -32,7 +32,7 @@ status_t NeuwareMemory::allocate_buffer(void **addr, size_t size) {
   return status_t::SUCCESS;
 }
 
-status_t NeuwareMemory::allocate_peerable_buffer(void **addr, size_t size) {
+status_t NeuwareMemory::allocatePeerableBuffer(void **addr, size_t size) {
   CNresult ret;
   cn_uint64_t buf_size = (size + ACCEL_PAGE_SIZE - 1) & ~(ACCEL_PAGE_SIZE - 1);
 
@@ -50,7 +50,7 @@ status_t NeuwareMemory::allocate_peerable_buffer(void **addr, size_t size) {
   return status_t::SUCCESS;
 }
 
-status_t NeuwareMemory::free_buffer(void *addr) {
+status_t NeuwareMemory::freeBuffer(void *addr) {
   CNresult ret;
   CNaddr addr_mlu = (CNaddr)addr;
   ret = cnFree(addr_mlu);
@@ -62,12 +62,12 @@ status_t NeuwareMemory::free_buffer(void *addr) {
   return status_t::SUCCESS;
 }
 
-status_t NeuwareMemory::copy_host_to_device(void *dest, const void *src,
+status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
                                             size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("NeuwareMemory::copy_host_to_device Error.");
+    logError("NeuwareMemory::copyHostToDevice Error.");
     return status_t::ERROR;
   }
 
@@ -82,12 +82,12 @@ status_t NeuwareMemory::copy_host_to_device(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t NeuwareMemory::copy_device_to_host(void *dest, const void *src,
+status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
                                             size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("NeuwareMemory::copy_device_to_host Error.");
+    logError("NeuwareMemory::copyDeviceToHost Error.");
     return status_t::ERROR;
   }
 
@@ -102,12 +102,12 @@ status_t NeuwareMemory::copy_device_to_host(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t NeuwareMemory::copy_device_to_device(void *dest, const void *src,
+status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
                                               size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("NeuwareMemory::copy_device_to_device Error.");
+    logError("NeuwareMemory::copyDeviceToDevice Error.");
     return status_t::ERROR;
   }
 
@@ -125,23 +125,23 @@ status_t NeuwareMemory::copy_device_to_device(void *dest, const void *src,
 #else
 status_t NeuwareMemory::init() { return status_t::UNSUPPORT; }
 status_t NeuwareMemory::free() { return status_t::UNSUPPORT; }
-status_t NeuwareMemory::allocate_buffer(void **addr, size_t size) {
+status_t NeuwareMemory::allocateBuffer(void **addr, size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t NeuwareMemory::allocate_peerable_buffer(void **addr, size_t size) {
+status_t NeuwareMemory::allocatePeerableBuffer(void **addr, size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t NeuwareMemory::free_buffer(void *addr) { return status_t::UNSUPPORT; }
+status_t NeuwareMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
-status_t NeuwareMemory::copy_host_to_device(void *dest, const void *src,
+status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
                                             size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t NeuwareMemory::copy_device_to_host(void *dest, const void *src,
+status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
                                             size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t NeuwareMemory::copy_device_to_device(void *dest, const void *src,
+status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
                                               size_t size) {
   return status_t::UNSUPPORT;
 }

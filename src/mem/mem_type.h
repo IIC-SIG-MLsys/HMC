@@ -25,13 +25,13 @@ public:
   ~HostMemory() { this->free(); }
   status_t init();
   status_t free();
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 };
 
 class CudaMemory : public MemoryBase {
@@ -49,13 +49,13 @@ public:
 
   status_t init();
   status_t free();
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 };
 
 class RocmMemory : public MemoryBase {
@@ -73,13 +73,13 @@ public:
 
   status_t init();
   status_t free();
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 };
 
 class NeuwareMemory : public MemoryBase {
@@ -100,13 +100,13 @@ public:
 
   status_t init();
   status_t free();
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 };
 
 class HuaweiMemory : public MemoryBase {
@@ -117,13 +117,13 @@ public:
 
   status_t init();
   status_t free();
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 
 private:
   // aclrtContext context_; // 上下文 -> TODO: ResourceManager

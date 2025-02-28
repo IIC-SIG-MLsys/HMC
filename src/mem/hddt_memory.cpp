@@ -34,44 +34,44 @@ std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
 }
 
 // copy data from host to device
-status_t Memory::copy_host_to_device(void *dest, const void *src, size_t size) {
-  return this->memoryClass->copy_host_to_device(dest, src, size);
+status_t Memory::copyHostToDevice(void *dest, const void *src, size_t size) {
+  return this->memoryClass->copyHostToDevice(dest, src, size);
 }
 
 // copy data from device to host
-status_t Memory::copy_device_to_host(void *dest, const void *src, size_t size) {
-  return this->memoryClass->copy_device_to_host(dest, src, size);
+status_t Memory::copyDeviceToHost(void *dest, const void *src, size_t size) {
+  return this->memoryClass->copyDeviceToHost(dest, src, size);
 }
 
 // copy data from device to device
-status_t Memory::copy_device_to_device(void *dest, const void *src,
+status_t Memory::copyDeviceToDevice(void *dest, const void *src,
                                        size_t size) {
-  return this->memoryClass->copy_device_to_device(dest, src, size);
+  return this->memoryClass->copyDeviceToDevice(dest, src, size);
 }
 
-status_t Memory::allocate_buffer(void **addr, size_t size) {
-  return this->memoryClass->allocate_buffer(addr, size);
+status_t Memory::allocateBuffer(void **addr, size_t size) {
+  return this->memoryClass->allocateBuffer(addr, size);
 }
 
-status_t Memory::allocate_peerable_buffer(void **addr, size_t size) {
-  return this->memoryClass->allocate_peerable_buffer(addr, size);
+status_t Memory::allocatePeerableBuffer(void **addr, size_t size) {
+  return this->memoryClass->allocatePeerableBuffer(addr, size);
 }
 
-status_t Memory::free_buffer(void *addr) {
-  return this->memoryClass->free_buffer(addr);
+status_t Memory::freeBuffer(void *addr) {
+  return this->memoryClass->freeBuffer(addr);
 }
 
 // get memory type
-MemoryType Memory::get_MemoryType() { return this->hddtMemoryType; }
+MemoryType Memory::getMemoryType() { return this->hddtMemoryType; }
 
 // get init status
-status_t Memory::get_init_Status() { return this->initStatus; }
+status_t Memory::getInitStatus() { return this->initStatus; }
 
 // get device id
-int Memory::get_DeviceId() { return this->hddtDeviceId; }
+int Memory::getDeviceId() { return this->hddtDeviceId; }
 
 // reset device id and memory type
-status_t Memory::set_DeviceId_and_MemoryType(int device_id,
+status_t Memory::setDeviceIdAndMemoryType(int device_id,
                                              MemoryType mem_type) {
   if (mem_type == MemoryType::DEFAULT) { // 未指定mem_type, 则根据系统决定
     this->hddtMemoryType = MemoryType::CPU;

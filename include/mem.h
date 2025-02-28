@@ -38,15 +38,15 @@ public:
 
   virtual status_t init() = 0;
   virtual status_t free() = 0;
-  virtual status_t allocate_buffer(void **addr, size_t size) = 0;
-  virtual status_t allocate_peerable_buffer(void **addr, size_t size) = 0;
-  virtual status_t free_buffer(void *addr) = 0;
+  virtual status_t allocateBuffer(void **addr, size_t size) = 0;
+  virtual status_t allocatePeerableBuffer(void **addr, size_t size) = 0;
+  virtual status_t freeBuffer(void *addr) = 0;
 
-  virtual status_t copy_host_to_device(void *dest, const void *src,
+  virtual status_t copyHostToDevice(void *dest, const void *src,
                                        size_t size) = 0;
-  virtual status_t copy_device_to_host(void *dest, const void *src,
+  virtual status_t copyDeviceToHost(void *dest, const void *src,
                                        size_t size) = 0;
-  virtual status_t copy_device_to_device(void *dest, const void *src,
+  virtual status_t copyDeviceToDevice(void *dest, const void *src,
                                          size_t size) = 0;
 };
 
@@ -64,7 +64,7 @@ private:
 
 public:
   Memory(int device_id, MemoryType mem_type = MemoryType::DEFAULT) {
-    this->set_DeviceId_and_MemoryType(device_id, mem_type);
+    this->setDeviceIdAndMemoryType(device_id, mem_type);
   }
 
   ~Memory() { this->free(); }
@@ -73,21 +73,21 @@ public:
   status_t init();
   status_t free();
 
-  status_t copy_host_to_device(void *dest, const void *src, size_t size);
-  status_t copy_device_to_host(void *dest, const void *src, size_t size);
-  status_t copy_device_to_device(void *dest, const void *src, size_t size);
+  status_t copyHostToDevice(void *dest, const void *src, size_t size);
+  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 
-  status_t allocate_buffer(void **addr, size_t size);
-  status_t allocate_peerable_buffer(void **addr, size_t size);
-  status_t free_buffer(void *addr);
+  status_t allocateBuffer(void **addr, size_t size);
+  status_t allocatePeerableBuffer(void **addr, size_t size);
+  status_t freeBuffer(void *addr);
 
   status_t
-  set_DeviceId_and_MemoryType(int device_id,
+  setDeviceIdAndMemoryType(int device_id,
                               MemoryType mem_type = MemoryType::DEFAULT);
 
-  MemoryType get_MemoryType();
-  status_t get_init_Status();
-  int get_DeviceId();
+  MemoryType getMemoryType();
+  status_t getInitStatus();
+  int getDeviceId();
 };
 
 } // namespace hddt
