@@ -45,43 +45,43 @@ PYBIND11_MODULE(hddt, m) {
       .def("init", &hddt::Memory::init)
       .def("free", &hddt::Memory::free)
       .def("createMemoryClass", &hddt::Memory::createMemoryClass)
-      .def("copy_host_to_device", &hddt::Memory::copy_host_to_device)
-      .def("copy_device_to_host", &hddt::Memory::copy_device_to_host)
-      .def("copy_device_to_device", &hddt::Memory::copy_device_to_device)
-      // 修改 allocate_buffer：分配内存后封装为 PyBufferWrapper 对象返回
+      .def("copyHostToDevice", &hddt::Memory::copyHostToDevice)
+      .def("copyDeviceToHost", &hddt::Memory::copyDeviceToHost)
+      .def("copyDeviceToDevice", &hddt::Memory::copyDeviceToDevice)
+      // 修改 allocateBuffer：分配内存后封装为 PyBufferWrapper 对象返回
       .def(
-          "allocate_buffer",
+          "allocateBuffer",
           [](hddt::Memory &self, size_t size) {
             void *ptr = nullptr;
-            auto status = self.allocate_buffer(&ptr, size);
+            auto status = self.allocateBuffer(&ptr, size);
             if (status != hddt::status_t::SUCCESS)
               return py::make_tuple(status, py::none());
             // 注意：此处要求 Memory 对象 self
             // 必须在返回的缓冲区对象生命周期内保持有效
             auto buffer_wrapper = new PyBufferWrapper(
-                ptr, size, [&self](void *p) { self.free_buffer(p); });
+                ptr, size, [&self](void *p) { self.freeBuffer(p); });
             return py::make_tuple(status, py::cast(buffer_wrapper));
           },
           py::arg("size"))
-      // 同理，修改 allocate_peerable_buffer
+      // 同理，修改 allocatePeerableBuffer
       .def(
-          "allocate_peerable_buffer",
+          "allocatePeerableBuffer",
           [](hddt::Memory &self, size_t size) {
             void *ptr = nullptr;
-            auto status = self.allocate_peerable_buffer(&ptr, size);
+            auto status = self.allocatePeerableBuffer(&ptr, size);
             if (status != hddt::status_t::SUCCESS)
               return py::make_tuple(status, py::none());
             auto buffer_wrapper = new PyBufferWrapper(
-                ptr, size, [&self](void *p) { self.free_buffer(p); });
+                ptr, size, [&self](void *p) { self.freeBuffer(p); });
             return py::make_tuple(status, py::cast(buffer_wrapper));
           },
           py::arg("size"))
-      .def("free_buffer", &hddt::Memory::free_buffer)
-      .def("set_DeviceId_and_MemoryType",
-           &hddt::Memory::set_DeviceId_and_MemoryType)
-      .def("get_MemoryType", &hddt::Memory::get_MemoryType)
-      .def("get_init_Status", &hddt::Memory::get_init_Status)
-      .def("get_DeviceId", &hddt::Memory::get_DeviceId);
+      .def("freeBuffer", &hddt::Memory::freeBuffer)
+      .def("setDeviceIdAndMemoryType",
+           &hddt::Memory::setDeviceIdAndMemoryType)
+      .def("getMemoryType", &hddt::Memory::getMemoryType)
+      .def("getInitStatus", &hddt::Memory::getInitStatus)
+      .def("getDeviceId", &hddt::Memory::getDeviceId);
 
   // 状态枚举绑定
   py::enum_<hddt::status_t>(m, "status_t")
@@ -255,7 +255,7 @@ import hddt
 memory = hddt.Memory(0, hddt.MemoryType.CPU)
 
 # 分配 1024 字节内存，返回 tuple(status, buffer)
-status, buf = memory.allocate_buffer(1024)
+status, buf = memory.allocateBuffer(1024)
 
 if status != hddt.status_t.SUCCESS:
     raise Exception("内存分配失败！")

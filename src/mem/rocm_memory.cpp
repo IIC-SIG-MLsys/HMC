@@ -16,7 +16,7 @@ status_t RocmMemory::init() { return init_gpu_driver(this->device_id); }
 
 status_t RocmMemory::free() { return free_gpu_driver(); }
 
-status_t RocmMemory::allocate_buffer(void **addr, size_t size) {
+status_t RocmMemory::allocateBuffer(void **addr, size_t size) {
   hipError_t ret;
 
   if (this->mem_type != MemoryType::AMD_GPU) {
@@ -33,12 +33,12 @@ status_t RocmMemory::allocate_buffer(void **addr, size_t size) {
   return status_t::SUCCESS;
 }
 
-status_t RocmMemory::allocate_peerable_buffer(void **addr, size_t size) {
+status_t RocmMemory::allocatePeerableBuffer(void **addr, size_t size) {
   size_t buf_size = (size + ACCEL_PAGE_SIZE - 1) & ~(ACCEL_PAGE_SIZE - 1);
-  return this->allocate_buffer(addr, buf_size);
+  return this->allocateBuffer(addr, buf_size);
 }
 
-status_t RocmMemory::free_buffer(void *addr) {
+status_t RocmMemory::freeBuffer(void *addr) {
   hipError_t ret;
   ret = hipFree(addr);
   if (ret != hipSuccess) {
@@ -49,12 +49,12 @@ status_t RocmMemory::free_buffer(void *addr) {
   return status_t::SUCCESS;
 }
 
-status_t RocmMemory::copy_host_to_device(void *dest, const void *src,
+status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
                                          size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_host_to_device Error.");
+    logError("HostMemory::copyHostToDevice Error.");
     return status_t::ERROR;
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyDeviceToHost);
@@ -66,12 +66,12 @@ status_t RocmMemory::copy_host_to_device(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t RocmMemory::copy_device_to_host(void *dest, const void *src,
+status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
                                          size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_host_to_device Error.");
+    logError("HostMemory::copyHostToDevice Error.");
     return status_t::ERROR;
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyHostToDevice);
@@ -83,12 +83,12 @@ status_t RocmMemory::copy_device_to_host(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t RocmMemory::copy_device_to_device(void *dest, const void *src,
+status_t RocmMemory::copyDeviceToDevice(void *dest, const void *src,
                                            size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_host_to_device Error.");
+    logError("HostMemory::copyHostToDevice Error.");
     return status_t::ERROR;
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyDeviceToDevice);
@@ -103,23 +103,23 @@ status_t RocmMemory::copy_device_to_device(void *dest, const void *src,
 #else
 status_t RocmMemory::init() { return status_t::UNSUPPORT; }
 status_t RocmMemory::free() { return status_t::UNSUPPORT; }
-status_t RocmMemory::allocate_buffer(void **addr, size_t size) {
+status_t RocmMemory::allocateBuffer(void **addr, size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t RocmMemory::allocate_peerable_buffer(void **addr, size_t size) {
+status_t RocmMemory::allocatePeerableBuffer(void **addr, size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t RocmMemory::free_buffer(void *addr) { return status_t::UNSUPPORT; }
+status_t RocmMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
-status_t RocmMemory::copy_host_to_device(void *dest, const void *src,
+status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
                                          size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t RocmMemory::copy_device_to_host(void *dest, const void *src,
+status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
                                          size_t size) {
   return status_t::UNSUPPORT;
 }
-status_t RocmMemory::copy_device_to_device(void *dest, const void *src,
+status_t RocmMemory::copyDeviceToDevice(void *dest, const void *src,
                                            size_t size) {
   return status_t::UNSUPPORT;
 }

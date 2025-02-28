@@ -32,12 +32,12 @@ status_t HostMemory::init() { return status_t::SUCCESS; }
 
 status_t HostMemory::free() { return status_t::SUCCESS; }
 
-status_t HostMemory::allocate_buffer(void **addr, size_t size) {
+status_t HostMemory::allocateBuffer(void **addr, size_t size) {
   logInfo("Allocate memory using new malloc.");
 
   void *buffer = new (std::nothrow) char[size];
   if (buffer == nullptr) {
-    logError("HostMemory::allocate_buffer Error.");
+    logError("HostMemory::allocateBuffer Error.");
     return status_t::ERROR;
   } else {
     *addr = buffer;
@@ -45,11 +45,11 @@ status_t HostMemory::allocate_buffer(void **addr, size_t size) {
   }
 }
 
-status_t HostMemory::allocate_peerable_buffer(void **addr, size_t size) {
-  return this->allocate_buffer(addr, size);
+status_t HostMemory::allocatePeerableBuffer(void **addr, size_t size) {
+  return this->allocateBuffer(addr, size);
 }
 
-status_t HostMemory::free_buffer(void *addr) {
+status_t HostMemory::freeBuffer(void *addr) {
   if (addr == nullptr) {
     return status_t::ERROR;
   }
@@ -61,10 +61,10 @@ status_t HostMemory::free_buffer(void *addr) {
   return status_t::SUCCESS;
 }
 
-status_t HostMemory::copy_host_to_device(void *dest, const void *src,
+status_t HostMemory::copyHostToDevice(void *dest, const void *src,
                                          size_t size) {
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_host_to_device Error.");
+    logError("HostMemory::copyHostToDevice Error.");
     return status_t::ERROR;
   }
 
@@ -77,10 +77,10 @@ status_t HostMemory::copy_host_to_device(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t HostMemory::copy_device_to_host(void *dest, const void *src,
+status_t HostMemory::copyDeviceToHost(void *dest, const void *src,
                                          size_t size) {
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_device_to_host Error.");
+    logError("HostMemory::copyDeviceToHost Error.");
     return status_t::ERROR;
   }
 
@@ -93,10 +93,10 @@ status_t HostMemory::copy_device_to_host(void *dest, const void *src,
   return status_t::SUCCESS;
 }
 
-status_t HostMemory::copy_device_to_device(void *dest, const void *src,
+status_t HostMemory::copyDeviceToDevice(void *dest, const void *src,
                                            size_t size) {
   if (dest == nullptr || src == nullptr) {
-    logError("HostMemory::copy_device_to_device Error.");
+    logError("HostMemory::copyDeviceToDevice Error.");
     return status_t::ERROR;
   }
 

@@ -202,11 +202,11 @@ Communicator::_getAddrByRank(uint32_t node_rank) {
 ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type)
     : buffer_size(buffer_size) {
   mem_ops = new Memory(1, mem_type);
-  mem_ops->allocate_peerable_buffer(&ptr, buffer_size);
+  mem_ops->allocatePeerableBuffer(&ptr, buffer_size);
 };
 
 ConnBuffer::~ConnBuffer() {
-  mem_ops->free_buffer(ptr);
+  mem_ops->freeBuffer(ptr);
   mem_ops->free();
 }
 
@@ -216,7 +216,7 @@ status_t ConnBuffer::writeFromCpu(void *src, size_t size, size_t bias) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
-  return mem_ops->copy_host_to_device(static_cast<char *>(ptr) + bias, src,
+  return mem_ops->copyHostToDevice(static_cast<char *>(ptr) + bias, src,
                                       size);
 }
 
@@ -226,11 +226,11 @@ status_t ConnBuffer::readToCpu(void *dest, size_t size, size_t bias) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
-  if (mem_ops->get_MemoryType() == MemoryType::CPU) {
+  if (mem_ops->getMemoryType() == MemoryType::CPU) {
     memcpy(dest, static_cast<char *>(ptr), size);
     return status_t::SUCCESS;
   }
-  return mem_ops->copy_device_to_host(dest, static_cast<char *>(ptr) + bias,
+  return mem_ops->copyDeviceToHost(dest, static_cast<char *>(ptr) + bias,
                                       size);
 }
 
@@ -240,11 +240,11 @@ status_t ConnBuffer::writeFromGpu(void *src, size_t size, size_t bias) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
-  if (mem_ops->get_MemoryType() == MemoryType::CPU) {
-    mem_ops->copy_device_to_host(static_cast<char *>(ptr) + bias, src, size);
+  if (mem_ops->getMemoryType() == MemoryType::CPU) {
+    mem_ops->copyDeviceToHost(static_cast<char *>(ptr) + bias, src, size);
     return status_t::SUCCESS;
   }
-  return mem_ops->copy_device_to_device(static_cast<char *>(ptr) + bias, src,
+  return mem_ops->copyDeviceToDevice(static_cast<char *>(ptr) + bias, src,
                                         size);
 }
 
@@ -254,11 +254,11 @@ status_t ConnBuffer::readToGpu(void *dest, size_t size, size_t bias) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
-  if (mem_ops->get_MemoryType() == MemoryType::CPU) {
-    mem_ops->copy_host_to_device(dest, static_cast<char *>(ptr) + bias, size);
+  if (mem_ops->getMemoryType() == MemoryType::CPU) {
+    mem_ops->copyHostToDevice(dest, static_cast<char *>(ptr) + bias, size);
     return status_t::SUCCESS;
   }
-  return mem_ops->copy_device_to_device(dest, static_cast<char *>(ptr) + bias,
+  return mem_ops->copyDeviceToDevice(dest, static_cast<char *>(ptr) + bias,
                                         size);
 }
 
