@@ -243,8 +243,8 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/torch_app)
 # add_subdirectory(apps/rdma_app)
 # add_subdirectory(apps/coll_app)
-# add_subdirectory(apps/comm_app)
+add_subdirectory(apps/comm_app)
 
-# # # build test
-enable_testing()
-add_subdirectory(tests)
+# # build test
+# enable_testing()
+# add_subdirectory(tests)
