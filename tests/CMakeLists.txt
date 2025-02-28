@@ -22,7 +22,6 @@ target_link_libraries(${BINARY} PRIVATE ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES}) 
 target_link_libraries(${BINARY} PRIVATE glog) # glog
 
 if(ROCM_FOUND)
-    # set(CMAKE_CXX_COMPILER "hipcc" CACHE STRING "C++ compiler" FORCE) # we should use hipcc
     target_link_libraries(${BINARY} PRIVATE hddt_rocm_shared)
     target_link_libraries(${BINARY} PRIVATE hddt_shared_lib ${HIP_LIBRARIES})
 elseif(CUDA_FOUND)
@@ -43,3 +42,11 @@ target_include_directories(${BINARY} PRIVATE ${CMAKE_SOURCE_DIR}/include) # sour
 target_include_directories(${BINARY} PRIVATE ${MPI_INCLUDE_DIR}) # mpi
 target_include_directories(${BINARY} PRIVATE ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR}) # rdma
 target_include_directories(${BINARY} PRIVATE ${GLOG_INCLUDE_DIRS}) # glog
+
+if(ROCM_FOUND)
+    # skip using mpicc while using hipcc as compiler
+else()
+    find_program(MPICC mpicxx REQUIRED)
+    set(CMAKE_C_COMPILER ${MPICC})
+    set(CMAKE_CXX_COMPILER ${MPICC})
+endif()
