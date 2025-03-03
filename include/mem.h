@@ -43,11 +43,11 @@ public:
   virtual status_t freeBuffer(void *addr) = 0;
 
   virtual status_t copyHostToDevice(void *dest, const void *src,
-                                       size_t size) = 0;
+                                    size_t size) = 0;
   virtual status_t copyDeviceToHost(void *dest, const void *src,
-                                       size_t size) = 0;
+                                    size_t size) = 0;
   virtual status_t copyDeviceToDevice(void *dest, const void *src,
-                                         size_t size) = 0;
+                                      size_t size) = 0;
 };
 
 /*
@@ -81,9 +81,8 @@ public:
   status_t allocatePeerableBuffer(void **addr, size_t size);
   status_t freeBuffer(void *addr);
 
-  status_t
-  setDeviceIdAndMemoryType(int device_id,
-                              MemoryType mem_type = MemoryType::DEFAULT);
+  status_t setDeviceIdAndMemoryType(int device_id,
+                                    MemoryType mem_type = MemoryType::DEFAULT);
 
   MemoryType getMemoryType();
   status_t getInitStatus();

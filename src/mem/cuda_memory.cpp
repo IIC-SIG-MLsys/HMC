@@ -49,7 +49,7 @@ status_t CudaMemory::freeBuffer(void *addr) {
 }
 
 status_t CudaMemory::copyHostToDevice(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   cudaError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -67,7 +67,7 @@ status_t CudaMemory::copyHostToDevice(void *dest, const void *src,
 }
 
 status_t CudaMemory::copyDeviceToHost(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   cudaError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -85,7 +85,7 @@ status_t CudaMemory::copyDeviceToHost(void *dest, const void *src,
 }
 
 status_t CudaMemory::copyDeviceToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   cudaError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -114,15 +114,15 @@ status_t CudaMemory::allocatePeerableBuffer(void **addr, size_t size) {
 status_t CudaMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
 status_t CudaMemory::copyHostToDevice(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t CudaMemory::copyDeviceToHost(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t CudaMemory::copyDeviceToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   return status_t::UNSUPPORT;
 }
 

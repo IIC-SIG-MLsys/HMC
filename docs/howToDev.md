@@ -25,7 +25,7 @@
 > note: make sure you have deleted the build dir
 
 ```
-find . -type f -regex ".*\.\(cpp\|c\|h\|hpp\|cu\|cuh\|py\|mlu\|hip\)$" -not -path "./extern/*" -print0 | xargs -0 clang-format -i
+find . -type f -regex ".*\.\(cpp\|cc\|c\|h\|hpp\|cu\|cuh\|py\|mlu\|hip\)$" -not -path "./extern/*" -print0 | xargs -0 clang-format -i
 ``` 
 
 # How to update local dev branch from upstream

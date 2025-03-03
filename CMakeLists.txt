@@ -126,7 +126,7 @@ include_directories(src) # 源文件下的其他头文件
 # with rdma
 include(FindRdma)
 
-file(GLOB_RECURSE SRC_RECURSE "src/*.cpp")
+file(GLOB_RECURSE SRC_RECURSE "src/*.cpp" "src/*.cc") # protobuf生成的是cc文件
 if(NOT SRC_RECURSE)
     message(FATAL_ERROR "No sources files found in the 'src' directory.")
 endif()
@@ -164,6 +164,10 @@ if(BUILD_STATIC_LIB)
     include(FindMPI)
     target_include_directories(hddt_static_lib PUBLIC include ${MPI_INCLUDE_DIR})
     target_link_libraries(hddt_static_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+
+    # with protobuf
+    include(FindProtoBuf)
+    target_link_libraries(hddt_static_lib PRIVATE ${PROTOBUF_LIBRARIES})
 
     install(TARGETS hddt_static_lib DESTINATION lib)
 endif()
@@ -206,6 +210,9 @@ set(MPI_LIBRARY ${MPI_LIBRARY} CACHE INTERNAL "MPI Library")
 target_include_directories(hddt_shared_lib PUBLIC include ${MPI_INCLUDE_DIR})
 target_link_libraries(hddt_shared_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
 
+# with protobuf
+include(FindProtoBuf)
+target_link_libraries(hddt_shared_lib PRIVATE ${PROTOBUF_LIBRARIES})
 
 if(BUILD_PYTHON_MOD)
     # # pybind
@@ -242,8 +249,8 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/simple_inference)
 # add_subdirectory(apps/torch_app)
 # add_subdirectory(apps/rdma_app)
-# add_subdirectory(apps/coll_app)
-add_subdirectory(apps/comm_app)
+add_subdirectory(apps/coll_app)
+# add_subdirectory(apps/comm_app)
 
 # # build test
 # enable_testing()

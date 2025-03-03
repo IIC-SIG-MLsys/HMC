@@ -62,7 +62,7 @@ status_t HostMemory::freeBuffer(void *addr) {
 }
 
 status_t HostMemory::copyHostToDevice(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   if (dest == nullptr || src == nullptr) {
     logError("HostMemory::copyHostToDevice Error.");
     return status_t::ERROR;
@@ -78,7 +78,7 @@ status_t HostMemory::copyHostToDevice(void *dest, const void *src,
 }
 
 status_t HostMemory::copyDeviceToHost(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   if (dest == nullptr || src == nullptr) {
     logError("HostMemory::copyDeviceToHost Error.");
     return status_t::ERROR;
@@ -94,7 +94,7 @@ status_t HostMemory::copyDeviceToHost(void *dest, const void *src,
 }
 
 status_t HostMemory::copyDeviceToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   if (dest == nullptr || src == nullptr) {
     logError("HostMemory::copyDeviceToDevice Error.");
     return status_t::ERROR;

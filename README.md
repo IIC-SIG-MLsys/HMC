@@ -30,14 +30,18 @@ make
 1. Compute libraries and drivers: CUDA/DTK/CNRT, etc.
 2. OpenMPI  
     `sudo apt install openmpi-bin openmpi-common libopenmpi-dev`
-3. Miniconda  
+3. Glog  
+    - `sudo apt-get install libgoogle-glog-dev`
+4. Protobuf
+    - `sudo apt-get install libprotobuf-dev`
+5. Gtest if build tests
+    - `sudo apt-get install libgtest-dev`
+6. Miniconda if build app/torch_app
     - `https://docs.anaconda.com/miniconda/`
     - `conda create -n py310 python=3.10`
-4. PyTorch  
+7. PyTorch if build app/torch_app
     - `pip3 install torch torchvision torchaudio`
     - `python -c "import torch; print(torch.cuda.is_available())"`
-5. Glog  
-    - `sudo apt-get install libgoogle-glog-dev`
 
 ## Build Python Package  
 The project packages its core functionalities for Python using pybind11.

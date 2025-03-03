@@ -28,6 +28,7 @@
 #include <cstdlib>
 #include <iostream>
 #include <memory>
+#include <queue>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -93,6 +94,20 @@ public:
 
 private:
   const std::pair<std::string, uint16_t> *_getAddrByRank(uint32_t node_rank);
+};
+
+/* controller */
+class Parser;
+class Executor;
+
+class Controller {
+public:
+  Controller();
+  ~Controller();
+
+private:
+  std::queue<std::unique_ptr<Executor>> ec_pool;
+  // uint64_t step_count; // 状态计数器 : TODO: 用作动态添加任务
 };
 
 } // namespace hddt

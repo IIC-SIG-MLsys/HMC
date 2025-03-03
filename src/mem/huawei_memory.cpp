@@ -68,7 +68,7 @@ status_t HuaweiMemory::freeBuffer(void *addr) {
 }
 
 status_t HuaweiMemory::copyHostToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   if (!dest || !src) {
     return status_t::ERROR;
   }
@@ -81,7 +81,7 @@ status_t HuaweiMemory::copyHostToDevice(void *dest, const void *src,
 }
 
 status_t HuaweiMemory::copyDeviceToHost(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   if (!dest || !src) {
     return status_t::ERROR;
   }
@@ -94,7 +94,7 @@ status_t HuaweiMemory::copyDeviceToHost(void *dest, const void *src,
 }
 
 status_t HuaweiMemory::copyDeviceToDevice(void *dest, const void *src,
-                                             size_t size) {
+                                          size_t size) {
   if (!dest || !src) {
     return status_t::ERROR;
   }
@@ -119,15 +119,15 @@ status_t HuaweiMemory::allocatePeerableBuffer(void **addr, size_t size) {
 status_t HuaweiMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
 status_t HuaweiMemory::copyHostToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t HuaweiMemory::copyDeviceToHost(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t HuaweiMemory::copyDeviceToDevice(void *dest, const void *src,
-                                             size_t size) {
+                                          size_t size) {
   return status_t::UNSUPPORT;
 }
 

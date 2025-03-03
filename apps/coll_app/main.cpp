@@ -1,21 +1,26 @@
 #include <coll.h>
 #include <iostream>
 
+#include "utils/proto.h"
+
 using namespace hddt;
 
 int main(int argc, char *argv[]) {
-  MpiOob *oob = new MpiOob(argc, argv);
+  MPIOOB mpiOob; // 自动初始化 MPI
 
-  // 使用 std::cout 替代 logInfo 输出信息
-  std::cout << "current rank: " << oob->rank
-            << ", ip: " << oob->get_ip(oob->rank) << std::endl;
-  for (int i = 0; i < oob->world_size; ++i) {
-    std::cout << "rank " << i << ", oob: " << oob->get_ip(i) << std::endl;
+  hddt::RankInfoCollection rankInfo = mpiOob.collectRankInfo();
+
+  if (mpiOob.getRank() == 0) {
+    std::cout << "Collected Rank Info:\n";
+    for (const auto &info : rankInfo.infos()) {
+      std::cout << "  Rank: " << info.rank() << ", Host: " << info.hostname()
+                << ", IP: " << info.ip_address()
+                << ", Time: " << info.timestamp() << "\n";
+    }
   }
 
-  delete oob; // 不要忘记释放分配的内存
-
-  return 0;
+  mpiOob.distributeTask(); // 任务分发
+  return 0;                // 自动调用 MPI_Finalize()
 }
 
 // sudo mpirun -np 2 -host ip1,ip2 ./coll_app

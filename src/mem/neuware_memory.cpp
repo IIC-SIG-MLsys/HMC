@@ -63,7 +63,7 @@ status_t NeuwareMemory::freeBuffer(void *addr) {
 }
 
 status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
-                                            size_t size) {
+                                         size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -83,7 +83,7 @@ status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
 }
 
 status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
-                                            size_t size) {
+                                         size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -103,7 +103,7 @@ status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
 }
 
 status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
-                                              size_t size) {
+                                           size_t size) {
   CNresult ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -134,15 +134,15 @@ status_t NeuwareMemory::allocatePeerableBuffer(void **addr, size_t size) {
 status_t NeuwareMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
 status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
-                                            size_t size) {
+                                         size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
-                                            size_t size) {
+                                         size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
-                                              size_t size) {
+                                           size_t size) {
   return status_t::UNSUPPORT;
 }
 

@@ -55,7 +55,8 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
     struct rdma_cm_event event_copy;
     memcpy(&event_copy, cm_event, sizeof(*cm_event));
     rdma_ack_cm_event(cm_event); // 马上做ACK处理，ACK之后cm_event即失效
-    /* 注意：ack_cm_event会消耗掉这个事件，使得内部的部分内容失效，比如上下文verbs,所以一定要处理完之后再ack */
+    /* 注意：ack_cm_event会消耗掉这个事件，使得内部的部分内容失效，比如上下文verbs,所以一定要处理完之后再ack
+     */
 
     // 解析ip, port
     // Ensure the address is of type sockaddr_in for IPv4.
@@ -210,7 +211,8 @@ failed:
   return nullptr;
 }
 
-status_t RDMAServer::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+status_t
+RDMAServer::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
   // 接收对端的元数据：发送前先准备一个接收。
   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
   struct ibv_sge recv_sge;
@@ -274,7 +276,7 @@ status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
 
   /** TODO：在endpoint->setupBuffers()增加，支持更多的数据buffer **/
 
-  if (endpoint->remote_metadata_attr.address == 0){
+  if (endpoint->remote_metadata_attr.address == 0) {
     logError("Server::exchange_metadata: Failed to get remote metadata");
     return status_t::ERROR;
   }
