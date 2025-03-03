@@ -216,8 +216,7 @@ status_t ConnBuffer::writeFromCpu(void *src, size_t size, size_t bias) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
-  return mem_ops->copyHostToDevice(static_cast<char *>(ptr) + bias, src,
-                                      size);
+  return mem_ops->copyHostToDevice(static_cast<char *>(ptr) + bias, src, size);
 }
 
 // 从ConnBuffer读取数据到CPU
@@ -230,8 +229,7 @@ status_t ConnBuffer::readToCpu(void *dest, size_t size, size_t bias) {
     memcpy(dest, static_cast<char *>(ptr), size);
     return status_t::SUCCESS;
   }
-  return mem_ops->copyDeviceToHost(dest, static_cast<char *>(ptr) + bias,
-                                      size);
+  return mem_ops->copyDeviceToHost(dest, static_cast<char *>(ptr) + bias, size);
 }
 
 // 从GPU向ConnBuffer写入数据
@@ -245,7 +243,7 @@ status_t ConnBuffer::writeFromGpu(void *src, size_t size, size_t bias) {
     return status_t::SUCCESS;
   }
   return mem_ops->copyDeviceToDevice(static_cast<char *>(ptr) + bias, src,
-                                        size);
+                                     size);
 }
 
 // 从ConnBuffer读取数据到GPU
@@ -259,7 +257,7 @@ status_t ConnBuffer::readToGpu(void *dest, size_t size, size_t bias) {
     return status_t::SUCCESS;
   }
   return mem_ops->copyDeviceToDevice(dest, static_cast<char *>(ptr) + bias,
-                                        size);
+                                     size);
 }
 
 } // namespace hddt

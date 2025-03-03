@@ -7,8 +7,8 @@
 #include <hddt.h>
 
 #include <mpi.h>
-#include <vector>
 #include <unistd.h>
+#include <vector>
 
 #define HOSTNAME_MAX 256
 #define MAX_IP_SIZE 1024
@@ -19,19 +19,19 @@ class RankInfoCollection;
 
 class MPIOOB {
 public:
-    MPIOOB();
-    ~MPIOOB();
+  MPIOOB();
+  ~MPIOOB();
 
-    int getRank() const { return rank; }
-    int getWorldSize() const { return world_size; }
+  int getRank() const { return rank; }
+  int getWorldSize() const { return world_size; }
 
-    hddt::RankInfoCollection collectRankInfo();
-    void distributeTask();
+  hddt::RankInfoCollection collectRankInfo();
+  void distributeTask();
 
 private:
-    int rank;
-    int world_size;
-    std::string getLocalIP();
+  int rank;
+  int world_size;
+  std::string getLocalIP();
 };
 
 //

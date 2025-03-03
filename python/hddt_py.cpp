@@ -77,8 +77,7 @@ PYBIND11_MODULE(hddt, m) {
           },
           py::arg("size"))
       .def("freeBuffer", &hddt::Memory::freeBuffer)
-      .def("setDeviceIdAndMemoryType",
-           &hddt::Memory::setDeviceIdAndMemoryType)
+      .def("setDeviceIdAndMemoryType", &hddt::Memory::setDeviceIdAndMemoryType)
       .def("getMemoryType", &hddt::Memory::getMemoryType)
       .def("getInitStatus", &hddt::Memory::getInitStatus)
       .def("getDeviceId", &hddt::Memory::getDeviceId);

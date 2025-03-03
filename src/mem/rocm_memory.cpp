@@ -50,7 +50,7 @@ status_t RocmMemory::freeBuffer(void *addr) {
 }
 
 status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -67,7 +67,7 @@ status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
 }
 
 status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -84,7 +84,7 @@ status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
 }
 
 status_t RocmMemory::copyDeviceToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   hipError_t ret;
 
   if (dest == nullptr || src == nullptr) {
@@ -112,15 +112,15 @@ status_t RocmMemory::allocatePeerableBuffer(void **addr, size_t size) {
 status_t RocmMemory::freeBuffer(void *addr) { return status_t::UNSUPPORT; }
 
 status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
-                                         size_t size) {
+                                      size_t size) {
   return status_t::UNSUPPORT;
 }
 status_t RocmMemory::copyDeviceToDevice(void *dest, const void *src,
-                                           size_t size) {
+                                        size_t size) {
   return status_t::UNSUPPORT;
 }
 #endif

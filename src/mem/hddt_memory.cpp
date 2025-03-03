@@ -44,8 +44,7 @@ status_t Memory::copyDeviceToHost(void *dest, const void *src, size_t size) {
 }
 
 // copy data from device to device
-status_t Memory::copyDeviceToDevice(void *dest, const void *src,
-                                       size_t size) {
+status_t Memory::copyDeviceToDevice(void *dest, const void *src, size_t size) {
   return this->memoryClass->copyDeviceToDevice(dest, src, size);
 }
 
@@ -71,8 +70,7 @@ status_t Memory::getInitStatus() { return this->initStatus; }
 int Memory::getDeviceId() { return this->hddtDeviceId; }
 
 // reset device id and memory type
-status_t Memory::setDeviceIdAndMemoryType(int device_id,
-                                             MemoryType mem_type) {
+status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
   if (mem_type == MemoryType::DEFAULT) { // 未指定mem_type, 则根据系统决定
     this->hddtMemoryType = MemoryType::CPU;
 

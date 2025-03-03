@@ -94,7 +94,7 @@ public:
 
   status_t listen(std::string ip, uint16_t port) override;
   std::unique_ptr<Endpoint> handleConnection(rdma_cm_id *id);
-  
+
 private:
   std::shared_ptr<ConnBuffer> buffer;
   struct rdma_cm_id *server_cm_id = NULL; // server用来监听的cm
