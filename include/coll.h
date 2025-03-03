@@ -6,50 +6,38 @@
 
 #include <hddt.h>
 
-#include <ifaddrs.h>
-#include <map>
 #include <mpi.h>
-#include <netdb.h>
+#include <vector>
+#include <unistd.h>
 
 #define HOSTNAME_MAX 256
 #define MAX_IP_SIZE 1024
 
 namespace hddt {
-class MpiOob {
+
+class RankInfoCollection;
+
+class MPIOOB {
 public:
-  int world_size;
-  int rank;
-  std::map<int, std::string> ip_tables;
+    MPIOOB();
+    ~MPIOOB();
 
-  MpiOob(int argc, char *argv[]) {
-    MPI_Init(&argc, &argv);
-    MPI_Comm_rank(MPI_COMM_WORLD, &this->rank);
-    MPI_Comm_size(MPI_COMM_WORLD, &this->world_size);
+    int getRank() const { return rank; }
+    int getWorldSize() const { return world_size; }
 
-    // get valid local ip address
-    std::string local_ip = get_local_ip();
-    if (local_ip.empty()) {
-      throw std::runtime_error("Failed to get local IP address");
-    }
-
-    ip_tables[rank] = local_ip;
-
-    // exchange ip
-    exchange_ip();
-  }
-  ~MpiOob() { MPI_Finalize(); }
-
-  void exchange_ip();
-  std::string get_ip(int rank);
+    hddt::RankInfoCollection collectRankInfo();
+    void distributeTask();
 
 private:
-  std::string get_local_ip();
+    int rank;
+    int world_size;
+    std::string getLocalIP();
 };
 
 //
 class AllToAll {
 public:
-  MpiOob *oob;
+  MPIOOB *oob;
   /*When data needs to be transferred between different hosts, network
    * communication technologies such as RDMA are used for efficient data
    * transmission. For data transfers within the same host, GPU memory copy (or
@@ -57,23 +45,23 @@ public:
    * transfer speeds.*/
   Communicator *comm;
 
-  AllToAll(MpiOob *oob, Communicator *comm) : oob(oob), comm(comm) {}
+  AllToAll(MPIOOB *oob, Communicator *comm) : oob(oob), comm(comm) {}
   ~AllToAll() {}
 };
 
 class AllReduce {
-  MpiOob *oob; //
+  MPIOOB *oob; //
   Communicator *comm;
 
-  AllReduce(MpiOob *oob, Communicator *comm) : oob(oob), comm(comm) {}
+  AllReduce(MPIOOB *oob, Communicator *comm) : oob(oob), comm(comm) {}
   ~AllReduce() {}
 };
 
 class ReduceScatter {
-  MpiOob *oob; //
+  MPIOOB *oob; //
   Communicator *comm;
 
-  ReduceScatter(MpiOob *oob, Communicator *comm) : oob(oob), comm(comm) {}
+  ReduceScatter(MPIOOB *oob, Communicator *comm) : oob(oob), comm(comm) {}
   ~ReduceScatter() {}
 };
 
