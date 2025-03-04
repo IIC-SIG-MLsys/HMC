@@ -162,8 +162,8 @@ if(BUILD_STATIC_LIB)
 
     # with openmpi (静态库部分)
     include(FindMPI)
-    target_include_directories(hddt_static_lib PUBLIC include ${MPI_INCLUDE_DIR})
-    target_link_libraries(hddt_static_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+    target_include_directories(hddt_static_lib PRIVATE include ${MPI_INCLUDE_DIR})
+    target_link_libraries(hddt_static_lib PRIVATE ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
 
     # with protobuf
     include(FindProtoBuf)
@@ -207,12 +207,30 @@ set(MPI_CXX_LIBRARY ${MPI_CXX_LIBRARY} CACHE INTERNAL "MPI C++ Library")
 set(MPI_INCLUDE_DIR ${MPI_INCLUDE_DIR} CACHE INTERNAL "MPI Include Directory")
 set(MPI_LIBRARY ${MPI_LIBRARY} CACHE INTERNAL "MPI Library")
 
-target_include_directories(hddt_shared_lib PUBLIC include ${MPI_INCLUDE_DIR})
-target_link_libraries(hddt_shared_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+target_include_directories(hddt_shared_lib PRIVATE include ${MPI_INCLUDE_DIR})
+target_link_libraries(hddt_shared_lib PRIVATE ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
 
 # with protobuf
 include(FindProtoBuf)
 target_link_libraries(hddt_shared_lib PRIVATE ${PROTOBUF_LIBRARIES})
+# re-gen with local protobuf
+# 定义.proto文件和生成代码的输出目录
+set(PROTO_FILE "${CMAKE_SOURCE_DIR}/src/utils/protobuf/hddt.proto")
+set(PROTO_OUT_DIR "${CMAKE_SOURCE_DIR}/src/utils/protobuf")
+# 添加命令以在构建过程中自动生成protobuf源文件
+add_custom_command(
+    OUTPUT ${PROTO_OUT_DIR}/hddt.pb.cc ${PROTO_OUT_DIR}/hddt.pb.h
+    COMMAND ${CMAKE_COMMAND} -E remove ${PROTO_OUT_DIR}/hddt.pb.cc ${PROTO_OUT_DIR}/hddt.pb.h
+    COMMAND ${PROTOBUF_PROTOC_EXECUTABLE}
+    ARGS --cpp_out=${PROTO_OUT_DIR} -I${CMAKE_SOURCE_DIR}/src/utils/protobuf ${PROTO_FILE}
+    COMMENT "Generating protobuf sources from ${PROTO_FILE}"
+)
+add_custom_target(generate_protobuf ALL
+    DEPENDS ${PROTO_OUT_DIR}/hddt.pb.cc ${PROTO_OUT_DIR}/hddt.pb.h
+    COMMENT "Force regeneration of protobuf files on every build"
+)
+# 项目target依赖于generate_protobuf target，确保它总是先于其他目标执行
+add_dependencies(hddt_shared_lib generate_protobuf)
 
 if(BUILD_PYTHON_MOD)
     # # pybind

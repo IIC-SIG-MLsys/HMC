@@ -20,3 +20,11 @@ endif()
 target_include_directories(dit PRIVATE
     ${CMAKE_SOURCE_DIR}/include
 )
+
+# use mpicc as compiler
+if(ROCM_FOUND)
+else()
+    find_program(MPICC mpicxx REQUIRED)
+    set(CMAKE_C_COMPILER ${MPICC})
+    set(CMAKE_CXX_COMPILER ${MPICC})
+endif()

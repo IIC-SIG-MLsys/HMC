@@ -6,7 +6,7 @@ using namespace hddt;
 int main() {
   /* GPU memory test */
   // Memory *mem_ops = new Memory(1);
-  Memory *mem_ops = new Memory(1, hddt::MemoryType::AMD_GPU);
+  Memory *mem_ops = new Memory(1, hddt::MemoryType::DEFAULT);
   void *addr;
   mem_ops->allocateBuffer(&addr, 1024);
 
