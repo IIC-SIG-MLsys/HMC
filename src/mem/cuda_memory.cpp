@@ -1,8 +1,8 @@
 /**
  * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
  */
-#include "../rm/driver.h"
-#include "mem_type.h"
+#include "../rm/gpu_interface.h"
+#include "./mem_type.h"
 #include <mem.h>
 
 namespace hddt {
@@ -10,9 +10,9 @@ namespace hddt {
 /*
  * nvidia gpu memory
  */
-status_t CudaMemory::init() { return init_gpu_driver(this->device_id); }
+status_t CudaMemory::init() { return gpuInit(); }
 
-status_t CudaMemory::free() { return free_gpu_driver(); }
+status_t CudaMemory::free() { return status_t::SUCCESS; }
 
 status_t CudaMemory::allocateBuffer(void **addr, size_t size) {
   cudaError_t ret;

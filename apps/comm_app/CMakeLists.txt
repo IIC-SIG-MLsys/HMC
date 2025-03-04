@@ -53,3 +53,11 @@ target_include_directories(comm_client PRIVATE
 target_link_libraries(mem PUBLIC glog)
 target_link_libraries(comm_server PUBLIC glog)
 target_link_libraries(comm_client PUBLIC glog)
+
+# use mpicc as compiler
+if(ROCM_FOUND)
+else()
+    find_program(MPICC mpicxx REQUIRED)
+    set(CMAKE_C_COMPILER ${MPICC})
+    set(CMAKE_CXX_COMPILER ${MPICC})
+endif()

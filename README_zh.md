@@ -2,6 +2,10 @@
 Distrubuted DNN Training on Heterogeneous GPUs
 
 ## 编译
+> 直接运行build.sh会自动完成编译
+
+> 如果是在新机器上首先构建 需要重新生成proto文件
+`cd src/utils/protobuf/ && rm hddt.pb.cc && rm hddt.pb.h && protoc --cpp_out=. hddt.proto && cd -`
 
 1. 创建编译目录
 ```
@@ -31,7 +35,7 @@ make
 3. Glog  
     - `sudo apt-get install libgoogle-glog-dev`
 4. Protobuf
-    - `sudo apt-get install libprotobuf-dev`
+    - `sudo apt-get install libprotobuf-dev protobuf-compiler`
 5. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
 6. Miniconda if build app/torch_app

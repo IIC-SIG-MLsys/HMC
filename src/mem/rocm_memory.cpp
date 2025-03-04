@@ -1,8 +1,8 @@
 /**
  * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
  */
-#include "../rm/driver.h"
-#include "mem_type.h"
+#include "../rm/gpu_interface.h"
+#include "./mem_type.h"
 #include <mem.h>
 
 namespace hddt {
@@ -12,9 +12,9 @@ namespace hddt {
 /*
  * amd gpu memory
  */
-status_t RocmMemory::init() { return init_gpu_driver(this->device_id); }
+status_t RocmMemory::init() { return gpuInit(); }
 
-status_t RocmMemory::free() { return free_gpu_driver(); }
+status_t RocmMemory::free() { return status_t::SUCCESS; }
 
 status_t RocmMemory::allocateBuffer(void **addr, size_t size) {
   hipError_t ret;

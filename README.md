@@ -4,6 +4,10 @@ Distributed DNN Training on Heterogeneous GPUs
 [中文](README_zh.md)
 
 ## How to Build?
+> You can automatically build the project by running bash `build.sh`
+
+> Re-generate proto files first
+`cd src/utils/protobuf/ && rm hddt.pb.cc && rm hddt.pb.h && protoc --cpp_out=. hddt.proto && cd -`
 
 1. Create a build directory  
 ```
@@ -33,7 +37,7 @@ make
 3. Glog  
     - `sudo apt-get install libgoogle-glog-dev`
 4. Protobuf
-    - `sudo apt-get install libprotobuf-dev`
+    - `sudo apt-get install libprotobuf-dev protobuf-compiler`
 5. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
 6. Miniconda if build app/torch_app

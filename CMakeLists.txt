@@ -162,8 +162,8 @@ if(BUILD_STATIC_LIB)
 
     # with openmpi (静态库部分)
     include(FindMPI)
-    target_include_directories(hddt_static_lib PUBLIC include ${MPI_INCLUDE_DIR})
-    target_link_libraries(hddt_static_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+    target_include_directories(hddt_static_lib PRIVATE include ${MPI_INCLUDE_DIR})
+    target_link_libraries(hddt_static_lib PRIVATE ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
 
     # with protobuf
     include(FindProtoBuf)
@@ -207,8 +207,8 @@ set(MPI_CXX_LIBRARY ${MPI_CXX_LIBRARY} CACHE INTERNAL "MPI C++ Library")
 set(MPI_INCLUDE_DIR ${MPI_INCLUDE_DIR} CACHE INTERNAL "MPI Include Directory")
 set(MPI_LIBRARY ${MPI_LIBRARY} CACHE INTERNAL "MPI Library")
 
-target_include_directories(hddt_shared_lib PUBLIC include ${MPI_INCLUDE_DIR})
-target_link_libraries(hddt_shared_lib PUBLIC ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
+target_include_directories(hddt_shared_lib PRIVATE include ${MPI_INCLUDE_DIR})
+target_link_libraries(hddt_shared_lib PRIVATE ${MPI_LIBRARY} ${MPI_CXX_LIBRARY})
 
 # with protobuf
 include(FindProtoBuf)
@@ -249,8 +249,9 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/simple_inference)
 # add_subdirectory(apps/torch_app)
 # add_subdirectory(apps/rdma_app)
-add_subdirectory(apps/coll_app)
+# add_subdirectory(apps/coll_app)
 # add_subdirectory(apps/comm_app)
+add_subdirectory(apps/driver_interface_test)
 
 # # build test
 # enable_testing()

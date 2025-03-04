@@ -11,7 +11,7 @@
 
 namespace hddt {
 
-class TaskMeta;
+class TaskMeta {};
 
 /* To get taskLists of this rank */
 class Parser {
