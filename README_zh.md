@@ -31,7 +31,7 @@ make
 3. Glog  
     - `sudo apt-get install libgoogle-glog-dev`
 4. Protobuf
-    - `sudo apt-get install libprotobuf-dev`
+    - `sudo apt-get install libprotobuf-dev protobuf-compiler`
 5. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
 6. Miniconda if build app/torch_app

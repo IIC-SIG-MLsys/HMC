@@ -1,7 +1,7 @@
 /**
  * @copyright Copyright (c) 2025, SDU SPgroup Holding Limited
  */
-#include "driver.h"
+#include "driver_manager.h"
 #include <infiniband/verbs.h>
 
 namespace hddt {
