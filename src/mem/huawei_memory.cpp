@@ -1,7 +1,7 @@
 /**
  * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
  */
-#include "mem_type.h"
+#include "./mem_type.h"
 
 #include <iostream>
 #include <mem.h>
