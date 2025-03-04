@@ -32,6 +32,10 @@ status_t GPUManager::init() {
   devices.resize(device_count);
 #if ENABLE_NEUWARE
   contexts.resize(device_count);
+  // create ctx for each device
+  for (int dev_id = 0; dev_id < device_count; ++dev_id) {
+    gpuCreateContext(&contexts[dev_id], dev_id);
+  }
 #endif
 
   // 收集设备信息

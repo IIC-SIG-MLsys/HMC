@@ -88,11 +88,13 @@ int main() {
 
   // 测试设置设备（仅测试第一个设备）
   if (gpuCount > 0) {
+#ifndef ENABLE_NEUWARE // skip, neuware 不支持
       if (hddt::gpuSetDevice(0) != hddt::status_t::SUCCESS) {
           std::cerr << "gpuSetDevice(0) 失败！" << std::endl;
       } else {
           std::cout << "gpuSetDevice(0) 成功！" << std::endl;
       }
+#endif
   }
 
 #ifdef ENABLE_NEUWARE

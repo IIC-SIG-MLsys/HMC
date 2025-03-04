@@ -37,44 +37,6 @@ status_t gpuInit() {
 #endif
 }
 
-
-template<typename T>
-status_t gpuGetDevice(T *dev, int mlu_ordinal) {
-#ifdef ENABLE_CUDA
-    int device; // 使用 Runtime API 获取当前设备，注意 T 应该为 int 类型
-    cudaError_t err = cudaGetDevice(&device);
-    if (err != cudaSuccess) {
-       logError("cudaGetDevice failed with error code %d\n", err);
-       return status_t::ERROR;
-    }
-    *dev = device;
-    return status_t::SUCCESS;
-#elif defined(ENABLE_ROCM)
-    int device;
-    hipError_t res = hipGetDevice(&device);
-    if (res != hipSuccess) {
-        logError("hipGetDevice failed with error code %d\n", res);
-        return status_t::ERROR;
-    }
-    *dev = device;
-    return status_t::SUCCESS;
-#elif defined(ENABLE_NEUWARE)
-    CNdev device;
-    CNresult res = cnDeviceGet(&device, mlu_ordinal);
-    if (res != CN_SUCCESS) {
-        logError("cnDeviceGet failed with error code %d", res);
-        return status_t::ERROR;
-    }
-    *dev = device;
-    return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-    // TODO
-    return status_t::SUCCESS;
-#else
-    return status_t::UNSUPPORT;
-#endif
-}
-
 // 获取设备的 PCIe 总线 ID
 status_t gpuGetPcieBusId(std::string *bus_id, int device_id) {
 #ifdef ENABLE_CUDA
@@ -157,7 +119,11 @@ status_t gpuGetDeviceMemory(uint64_t *free_size, uint64_t *total_size) {
     }
     return status_t::SUCCESS;
 #elif defined(ENABLE_NEUWARE)
-    cnMemGetInfo((cn_uint64_t *)free_size, (cn_uint64_t *)total_size);
+    CNresult ret = cnMemGetInfo((cn_uint64_t *)free_size, (cn_uint64_t *)total_size);
+    if (ret != CN_SUCCESS) {
+        logError("failed to get cnMemGetInfo %d.", ret);
+        return status_t::ERROR;
+    }
     return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
     // TODO
@@ -182,72 +148,6 @@ status_t gpuSetDevice(int device_id) {
          return status_t::ERROR;
     }
     return status_t::SUCCESS;
-#else
-    return status_t::UNSUPPORT;
-#endif
-}
-
-template<typename T>
-status_t gpuSetCtx(T &ctx) {
-#ifdef ENABLE_CUDA
-    // CUDA Runtime 不支持显式上下文管理，这里给出空实现
-    return status_t::SUCCESS;
-#elif defined(ENABLE_NEUWARE)
-    CNresult ret = cnCtxSetCurrent(ctx);
-    if (ret != CN_SUCCESS) {
-      logError("failed to set cnCtx %d.", ret);
-      return status_t::ERROR;
-    }
-    return status_t::SUCCESS;
-#else
-    return status_t::UNSUPPORT;
-#endif
-}
-
-template<typename T>
-status_t gpuCreateContext(T *ctx, int device_id) {
-#ifdef ENABLE_CUDA
-    // CUDA Runtime 中上下文是自动创建的，调用 cudaSetDevice 即可
-    cudaError_t err = cudaSetDevice(device_id);
-    if (err != cudaSuccess) {
-         logError("cudaSetDevice (in gpuCreateContext) failed with error code %d\n", err);
-         return status_t::ERROR;
-    }
-    *ctx = nullptr;  // 无需显式创建上下文，返回空指针或自定义标识
-    return status_t::SUCCESS;
-#elif defined(ENABLE_ROCM)
-    return status_t::UNSUPPORT;
-#elif defined(ENABLE_NEUWARE)
-    CNresult res = cnCtxCreate(ctx, 0, device_id);
-    if (res != CN_SUCCESS) {
-        logError("cnCtxCreate failed with error code %d", res);
-        return status_t::ERROR;
-    }
-    return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-    return status_t::UNSUPPORT;
-#else
-    return status_t::UNSUPPORT;
-#endif
-}
-
-template<typename T>
-status_t gpuFreeContext(T ctx) {
-#ifdef ENABLE_CUDA
-    // CUDA Runtime 的上下文由系统自动管理，不需要手动释放
-    return status_t::SUCCESS;
-#elif defined(ENABLE_ROCM)
-    return status_t::UNSUPPORT;
-#elif defined(ENABLE_NEUWARE)
-    CNresult res = cnCtxDestroy(ctx);
-    if (res != CN_SUCCESS) {
-        logError("cnCtxDestroy failed with error code %d", res);
-        return status_t::ERROR;
-    }
-    return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-    // TODO
-    return status_t::UNSUPPORT;
 #else
     return status_t::UNSUPPORT;
 #endif
