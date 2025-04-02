@@ -1,11 +1,8 @@
-# HDDT
-Distrubuted DNN Training on Heterogeneous GPUs
+# HMC
+Heterogeneous Memories Communication
 
 ## 编译
 > 直接运行build.sh会自动完成编译
-
-> 如果是在新机器上首先构建 需要重新生成proto文件
-`cd src/utils/protobuf/ && rm hddt.pb.cc && rm hddt.pb.h && protoc --cpp_out=. hddt.proto && cd -`
 
 1. 创建编译目录
 ```
@@ -30,20 +27,10 @@ make
 
 ## 环境依赖
 1. 计算库驱动 CUDA/DTK/CNRT etc.
-2. OpenMPI  
-    `sudo apt install openmpi-bin openmpi-common libopenmpi-dev`
-3. Glog  
+2. Glog  
     - `sudo apt-get install libgoogle-glog-dev`
-4. Protobuf
-    - `sudo apt-get install libprotobuf-dev protobuf-compiler`
-5. Gtest if build tests
+3. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
-6. Miniconda if build app/torch_app
-    - `https://docs.anaconda.com/miniconda/`
-    - `conda create -n py310 python=3.10`
-7. PyTorch if build app/torch_app
-    - `pip3 install torch torchvision torchaudio`
-    - `python -c "import torch; print(torch.cuda.is_available())"`
 
 
 ## python包

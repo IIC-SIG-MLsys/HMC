@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include <hddt.h>
+#include <hmc.h>
 #include <mem.h>
 
-namespace hddt {
+namespace hmc {
 
 class DeviceMemoryTest : public ::testing::Test {
 protected:
@@ -104,4 +104,4 @@ TEST_F(DeviceMemoryTest, SetNewIdMemoryType_NvidiaGPUtoAMDGPU_NotSupported) {
       std::runtime_error);
 }
 
-} // namespace hddt
+} // namespace hmc

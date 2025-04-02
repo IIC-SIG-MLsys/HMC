@@ -9,7 +9,7 @@
 #include <cstring>
 #include <memory>
 
-namespace hddt {
+namespace hmc {
 
 #define ACCEL_PAGE_SIZE (64 * 1024)
 typedef uint64_t CNaddr;
@@ -51,14 +51,13 @@ public:
 };
 
 /*
- * 新增HddtMemory类，可由用户指定设备类型和设备号，并自动创建相应的Memory类实例
+ * 可由用户指定设备类型和设备号，并自动创建相应的Memory类实例
  * 也可由系统自动识别支持device的类型
- *
  */
 class Memory {
 private:
-  int hddtDeviceId;
-  MemoryType hddtMemoryType;
+  int hmcDeviceId;
+  MemoryType hmcMemoryType;
   std::unique_ptr<MemoryBase> memoryClass;
   status_t initStatus;
 
@@ -89,5 +88,5 @@ public:
   int getDeviceId();
 };
 
-} // namespace hddt
+} // namespace hmc
 #endif

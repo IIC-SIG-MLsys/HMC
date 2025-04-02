@@ -1,12 +1,12 @@
 #include <iostream>
 #include <mem.h>
 
-using namespace hddt;
+using namespace hmc;
 
 int main() {
   /* GPU memory test */
   // Memory *mem_ops = new Memory(1);
-  Memory *mem_ops = new Memory(1, hddt::MemoryType::DEFAULT);
+  Memory *mem_ops = new Memory(1, hmc::MemoryType::DEFAULT);
   void *addr;
   mem_ops->allocateBuffer(&addr, 1024);
 

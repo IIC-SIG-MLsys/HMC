@@ -1,13 +1,10 @@
-# HDDT  
-Distributed DNN Training on Heterogeneous GPUs
+# HMC  
+Heterogeneous Memories Communication
 
 [中文](README_zh.md)
 
 ## How to Build?
 > You can automatically build the project by running bash `build.sh`
-
-> Re-generate proto files first
-`cd src/utils/protobuf/ && rm hddt.pb.cc && rm hddt.pb.h && protoc --cpp_out=. hddt.proto && cd -`
 
 1. Create a build directory  
 ```
@@ -32,20 +29,10 @@ make
 
 ## Environment Dependencies
 1. Compute libraries and drivers: CUDA/DTK/CNRT, etc.
-2. OpenMPI  
-    `sudo apt install openmpi-bin openmpi-common libopenmpi-dev`
-3. Glog  
+2. Glog  
     - `sudo apt-get install libgoogle-glog-dev`
-4. Protobuf
-    - `sudo apt-get install libprotobuf-dev protobuf-compiler`
-5. Gtest if build tests
+3. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
-6. Miniconda if build app/torch_app
-    - `https://docs.anaconda.com/miniconda/`
-    - `conda create -n py310 python=3.10`
-7. PyTorch if build app/torch_app
-    - `pip3 install torch torchvision torchaudio`
-    - `python -c "import torch; print(torch.cuda.is_available())"`
 
 ## Build Python Package  
 The project packages its core functionalities for Python using pybind11.

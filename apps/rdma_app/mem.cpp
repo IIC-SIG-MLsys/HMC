@@ -1,7 +1,7 @@
-#include <hddt.h>
+#include <hmc.h>
 #include <mem.h>
 
-using namespace hddt;
+using namespace hmc;
 
 int main() {
   /* GPU memory test */

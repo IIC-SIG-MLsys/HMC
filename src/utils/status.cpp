@@ -3,7 +3,7 @@
  */
 #include <status.h>
 
-namespace hddt {
+namespace hmc {
 
 const char *status_to_string(status_t status) {
   switch (status) {
@@ -22,4 +22,4 @@ const char *status_to_string(status_t status) {
   }
 }
 
-} // namespace hddt
+} // namespace hmc

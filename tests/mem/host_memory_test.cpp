@@ -1,8 +1,8 @@
 #include <gtest/gtest.h>
-#include <hddt.h>
+#include <hmc.h>
 #include <mem.h>
 
-namespace hddt {
+namespace hmc {
 
 class HostMemoryTest : public ::testing::Test {
 protected:
@@ -89,4 +89,4 @@ TEST_F(HostMemoryTest, CopyDeviceToDevice_Nullptr) {
       status_t::ERROR);
 }
 
-} // namespace hddt
+} // namespace hmc

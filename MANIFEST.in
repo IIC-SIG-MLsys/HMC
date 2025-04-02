@@ -1,2 +1,2 @@
 include README.md
-include hddt/hddt.so
+include hmc/hmc.so

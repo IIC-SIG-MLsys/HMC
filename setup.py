@@ -2,7 +2,7 @@ from setuptools import setup
 import os, re, shutil
 
 def find_and_copy_so_file(build_dir, target_dir, target_name):
-    pattern = re.compile(r'^hddt\..*\.so$')
+    pattern = re.compile(r'^hmc\..*\.so$')
     
     if not os.path.exists(build_dir):
         os.makedirs(build_dir)
@@ -20,8 +20,8 @@ def find_and_copy_so_file(build_dir, target_dir, target_name):
     print("No matching .so file found in the build directory.")
 
 build_directory = 'build'  # where the .so file is located
-pkg_directory = 'hddt'  # target directory for the .so file
-new_filename = 'hddt.so'
+pkg_directory = 'hmc'  # target directory for the .so file
+new_filename = 'hmc.so'
 
 if not os.path.exists(pkg_directory):
     os.makedirs(pkg_directory)
@@ -29,14 +29,14 @@ if not os.path.exists(pkg_directory):
 find_and_copy_so_file(build_directory, pkg_directory, new_filename)
 
 setup(
-    name='hddt',
+    name='hmc',
     version='0.0.1',
     author='JaceLau',
     author_email='jacalau@outlook.com',
-    description='HDDT python binding',
-    packages=['hddt'],
+    description='HMC python binding',
+    packages=['hmc'],
     package_data={
-        'hddt': ['hddt/hddt.so'],
+        'hmc': ['hmc/hmc.so'],
     },
     include_package_data=True,
     zip_safe=False,

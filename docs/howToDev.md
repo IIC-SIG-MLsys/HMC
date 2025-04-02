@@ -25,13 +25,13 @@
 > note: make sure you have deleted the build dir
 
 ```
-find . -type f -regex ".*\.\(cpp\|cc\|c\|h\|hpp\|cu\|cuh\|py\|mlu\|hip\)$" -not -path "./extern/*" -print0 | xargs -0 clang-format -i
+find . -type f -regex ".*\.\(cpp\|cc\|c\|h\|hpp\)$" -not -path "./extern/*" -print0 | xargs -0 clang-format -i
 ``` 
 
 # How to update local dev branch from upstream
 1. add upstream
     ```
-    git remote add upstream https://github.com/IIC-SIG-MLsys/HDDT
+    git remote add upstream https://github.com/IIC-SIG-MLsys/HMC
     ```
 2. fetch
     ```

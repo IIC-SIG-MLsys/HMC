@@ -1,7 +1,7 @@
 #include <glog/logging.h>
-#include <hddt.h>
+#include <hmc.h>
 
-using namespace hddt;
+using namespace hmc;
 
 int main() {
   FLAGS_colorlogtostderr = true;

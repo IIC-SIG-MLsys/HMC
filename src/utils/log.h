@@ -1,11 +1,11 @@
 /**
  * @copyright Copyright (c) 2025, SDU SPgroup Holding Limited
  */
-#ifndef HDDT_LOG_H
-#define HDDT_LOG_H
+#ifndef HMC_LOG_H
+#define HMC_LOG_H
 
 #include <glog/logging.h>
-#include <hddt.h>
+#include <hmc.h>
 
 /* log */
 #define logError(fmt, ...)                                                     \

@@ -9,7 +9,7 @@
 static std::atomic<bool> running(true);
 
 void signal_handler(int sig) {
-  if (sig == SIGINT) { // 捕获 Ctrl+C
+  if (sig == SIGINT) { // capture Ctrl+C
     running = false;
     logError("Caught Ctrl+C, preparing to exit...");
   }
