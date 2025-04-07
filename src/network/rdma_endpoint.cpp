@@ -5,8 +5,8 @@
 
 namespace hmc {
 
-RDMAEndpoint::RDMAEndpoint(void *buffer, size_t buffer_size)
-    : buffer(buffer), buffer_size(buffer_size){};
+RDMAEndpoint::RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer)
+    : buffer(buffer){};
 
 RDMAEndpoint::~RDMAEndpoint() {
   if (role == EndpointType::Client) {
@@ -33,7 +33,7 @@ status_t RDMAEndpoint::closeEndpoint() {
 
 status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
   // 实现写入远端数据逻辑
-  if (data_bias + size > buffer_size) {
+  if (data_bias + size > buffer->buffer_size) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
@@ -50,7 +50,7 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
 
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
   // 实现读取远端数据逻辑
-  if (data_bias + size > buffer_size) {
+  if (data_bias + size > buffer->buffer_size) {
     logError("Invalid data bias and size");
     return status_t::ERROR;
   }
@@ -66,7 +66,7 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
 }
 
 status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
-  void *localAddr = static_cast<char *>(buffer) + data_bias;
+  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
   return postWrite(localAddr, remoteAddr, size, buffer_mr,
@@ -74,7 +74,7 @@ status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
 }
 
 status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size) {
-  void *localAddr = static_cast<char *>(buffer) + data_bias;
+  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
   return postRead(localAddr, remoteAddr, size, buffer_mr,
@@ -190,6 +190,44 @@ status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
   return status_t::SUCCESS;
 }
 
+status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) {
+  const size_t half_buffer_size = buffer->buffer_size / 2;
+  const size_t num_send_chunks =
+      (send_flags + half_buffer_size - 1) / half_buffer_size;
+
+  // 标志位初始化, send使用remote_metadata_attr
+  remote_metadata_attr.uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
+  remote_metadata_attr.uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
+
+  size_t current_chunk = 0;
+  status_t ret = status_t::SUCCESS;
+
+  // 预先拷贝第一个chunk的数据
+  size_t chunk_index = 0;
+  size_t send_size = std::min(half_buffer_size, send_flags);
+
+  mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, send_size) : buffer->writeFromGpu(input_buffer, send_size);
+
+  while (current_chunk < num_send_chunks) {
+    chunk_index = current_chunk % 2;
+    size_t next_chunk_index = (current_chunk + 1) % 2;
+    logDebug(
+        "Client::Send: current_chunk %ld, chunk_index %ld, num_send_chunks %ld",
+        current_chunk, chunk_index, num_send_chunks);
+
+    // todo
+  
+  }
+
+  return status_t::SUCCESS;
+}
+status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
+                      size_t *recv_flags, MemoryType mem_type) {
+  // 标志位初始化, recv使用local_metadata_attr
+
+  return status_t::SUCCESS;
+}
+
 status_t RDMAEndpoint::setupBuffers() {
   /** buffer 的相关数据准备 **/
   // 注册本地元数据缓冲区
@@ -211,14 +249,14 @@ status_t RDMAEndpoint::setupBuffers() {
     return ret;
   }
   // 注册缓冲区
-  ret = registerMemory(buffer, buffer_size, &buffer_mr);
+  ret = registerMemory(buffer->ptr, buffer->buffer_size, &buffer_mr);
   if (ret != status_t::SUCCESS) {
-    logError("Error while register buffer %p", buffer);
+    logError("Error while register buffer %p", buffer.get());
     return ret;
   }
   // 设置本地元数据属性
-  local_metadata_attr.address = (uint64_t)buffer;
-  local_metadata_attr.length = buffer_size;
+  local_metadata_attr.address = (uint64_t)buffer->ptr;
+  local_metadata_attr.length = buffer->buffer_size;
   local_metadata_attr.key = buffer_mr->lkey;
 
   /** TODO：在这里增加，支持更多的数据buffer; 在exchangeMetadata完成数据信息交换

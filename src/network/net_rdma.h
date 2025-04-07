@@ -9,28 +9,46 @@
 #include <infiniband/verbs.h>
 #include <rdma/rdma_cma.h>
 
+namespace hmc {
+
+#define UHM_STATE_TYPE uint32_t
+typedef enum {
+    UHM_BUFFER_CAN_WRITE = 0, // 标识发送端可以写
+    UHM_BUFFER_CAN_READ = 1,  // 标识接收端可以读
+    UHM_BUFFER_FINISHED = 2   // 标识传输完成
+} UHMBufferStateType;
+
+struct __attribute__((packed)) UHMBufferState {
+  UHM_STATE_TYPE state[2]; // 0: 第一个buffer，1: 第二个buffer
+  UHM_STATE_TYPE length;   // 第三位是length标识传输长度
+};
+
 struct __attribute((packed)) rdma_buffer_attr {
   uint64_t address;
   uint32_t length;
   uint32_t key;
+  struct UHMBufferState uhm_buffer_state;
 };
-
-namespace hmc {
 
 class RDMAEndpoint : public Endpoint {
   /* cm_id, qp, cq, mr
    * 是RDMA通信需要持有的四个关键元素，每个Endpoint应持有隔离的四元组 */
 public:
-  RDMAEndpoint(void *buffer, size_t buffer_size);
+  RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer);
   status_t closeEndpoint() override;
 
   status_t writeData(size_t data_bias, size_t size) override;
   status_t readData(size_t data_bias, size_t size) override;
 
-  status_t writeDataNB(size_t data_bias, size_t size);
-  status_t readDataNB(size_t data_bias, size_t size);
+  status_t writeDataNB(size_t data_bias, size_t size) override;
+  status_t readDataNB(size_t data_bias, size_t size) override;
+  status_t pollCompletion(int num_completions_to_process) override;
 
-  status_t pollCompletion(int num_completions_to_process);
+  status_t uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) override;
+  status_t uhm_recv(void *output_buffer, const size_t buffer_size,
+                      size_t *recv_flags, MemoryType mem_type) override;
+
+  ~RDMAEndpoint();
 
   status_t registerMemory(void *addr, size_t length, struct ibv_mr **mr);
   status_t deRegisterMemory(struct ibv_mr *mr);
@@ -48,11 +66,10 @@ public:
                     struct ibv_mr *local_mr, uint32_t remote_key,
                     bool signaled);
 
-  ~RDMAEndpoint();
-
 public:
-  void *buffer = NULL; // register
-  size_t buffer_size = 0;
+  // void *buffer = NULL; // register
+  // size_t buffer_size = 0;
+  std::shared_ptr<ConnBuffer> buffer;
   bool is_buffer_ok = false;
 
   // the RDMA connection identifier : cm(connection management)

@@ -28,7 +28,7 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
   }
 
   auto endpoint =
-      std::make_unique<RDMAEndpoint>(buffer->ptr, buffer->buffer_size);
+      std::make_unique<RDMAEndpoint>(buffer);
   endpoint->role = EndpointType::Client;
 
   while (this->retry_count < this->max_retry_times) {

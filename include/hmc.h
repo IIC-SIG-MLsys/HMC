@@ -65,7 +65,7 @@ enum class ConnType { RDMA, UCX };
 
 class Communicator {
 private:
-  std::unordered_map<uint32_t, std::pair<std::string, uint16_t>> rank_addr_map;
+  std::unordered_map<uint32_t, std::pair<std::string, uint16_t>> rank_addr_map; // rank: ip, port
   std::shared_ptr<ConnBuffer> buffer;
   std::shared_ptr<ConnManager>
       conn_manager; // must be shared, enable shared obj
@@ -78,14 +78,14 @@ public:
   status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size,
                     ConnType connType = ConnType::RDMA);
 
-  status_t connectTo(uint32_t node_rank, ConnType connType);
+  status_t sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size); // uhm interface, for big data
+  status_t recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, size_t *flag); // flag, recv size
+
   status_t initServer(std::string ip, uint16_t port, ConnType serverType);
+  status_t connectTo(uint32_t node_rank, ConnType connType);
   status_t disConnect(uint32_t node_rank, ConnType connType);
   status_t checkConn(uint32_t node_rank, ConnType connType);
-
-  // status_t sendDataNB(uint32_t node_rank, uint64_t ptr_bias); // no block
-  // status_t recvDataNB(uint32_t node_rank, uint64_t ptr_bias);
-  // status_t syncStatus() // test no block event status
+  status_t checkOrNewConn(uint32_t node_rank, ConnType connType, std::string *ip);
 
   status_t addNewRankAddr(uint32_t rank, std::string ip, uint16_t port);
   status_t delRankAddr(uint32_t rank);

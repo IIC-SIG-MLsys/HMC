@@ -34,6 +34,11 @@ make
 3. Gtest if build tests
     - `sudo apt-get install libgtest-dev`
 
+```
+HIP clang cmath error:
+sudo apt install libstdc++-12-devs g++-12
+```
+
 ## Build Python Package  
 The project packages its core functionalities for Python using pybind11.
 

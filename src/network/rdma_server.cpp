@@ -121,7 +121,7 @@ std::unique_ptr<Endpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
   logDebug("buffer: buffer->ptr %p, buffer->size %zu", buffer->ptr,
            buffer->buffer_size);
   auto endpoint =
-      std::make_unique<RDMAEndpoint>(buffer->ptr, buffer->buffer_size);
+      std::make_unique<RDMAEndpoint>(buffer);
   endpoint->role = EndpointType::Server;
 
   endpoint->cm_id = id;

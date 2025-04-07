@@ -17,9 +17,7 @@ Communicator::~Communicator() {
   logDebug("finished");
 }
 
-status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
-                               ConnType connType) {
-
+status_t Communicator::checkOrNewConn(uint32_t node_rank, ConnType connType, std::string *ip) {
   if (checkConn(node_rank, connType) != status_t::SUCCESS) {
     logError("Communicator::connect: endpoint by rank %d does not exist, try "
              "to connect",
@@ -43,7 +41,20 @@ status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
     logError("Communicator::connect: can't get addr by rank %d", node_rank);
     return status_t::ERROR;
   }
-  auto ip = addr->first;
+  *ip = addr->first;
+  return status_t::SUCCESS;
+}
+
+status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
+                               ConnType connType) {
+  std::string ip;
+  status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
+  if ( sret != status_t::SUCCESS) {
+    sret = checkOrNewConn(node_rank, ConnType::UCX, &ip);
+    if ( sret != status_t::SUCCESS) {
+      return sret;
+    }
+  }
 
   return conn_manager->withEndpoint(
       ip, [ptr_bias, size](Endpoint *ep) -> status_t {
@@ -55,30 +66,14 @@ status_t Communicator::writeTo(uint32_t node_rank, size_t ptr_bias, size_t size,
 
 status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias,
                                 size_t size, ConnType connType) {
-  if (checkConn(node_rank, connType) != status_t::SUCCESS) {
-    logError("Communicator::connect: endpoint by rank %d does not exist, try "
-             "to connect",
-             node_rank);
-
-    const std::pair<std::string, uint16_t> *addr_info =
-        _getAddrByRank(node_rank);
-    auto ip = addr_info->first;
-    auto port = addr_info->second;
-
-    if (conn_manager->initiateConnectionAsClient(ip, port, connType) !=
-        status_t::SUCCESS) {
-      logError("Communicator::connect: connect to %s:%d failed", ip.c_str(),
-               port);
-      return status_t::ERROR;
+  std::string ip;
+  status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
+  if ( sret != status_t::SUCCESS) {
+    sret = checkOrNewConn(node_rank, ConnType::UCX, &ip);
+    if ( sret != status_t::SUCCESS) {
+      return sret;
     }
   }
-
-  auto addr = _getAddrByRank(node_rank);
-  if (addr == nullptr) {
-    logError("Communicator::connect: can't get addr by rank %d", node_rank);
-    return status_t::ERROR;
-  }
-  auto ip = addr->first;
 
   return conn_manager->withEndpoint(
       ip, [ptr_bias, size](Endpoint *ep) -> status_t {
@@ -86,6 +81,36 @@ status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias,
           return status_t::ERROR;
         return ep->readData(ptr_bias, size); // 传递返回状态
       });
+};
+
+status_t Communicator::sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size) {
+  std::string ip;
+  status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
+  if ( sret != status_t::SUCCESS) {
+    sret = checkOrNewConn(node_rank, ConnType::UCX, &ip);
+    if ( sret != status_t::SUCCESS) {
+      return sret;
+    }
+  }
+
+  // todo
+
+  return status_t::SUCCESS;
+};
+
+status_t Communicator::recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, size_t *flag) {
+  std::string ip;
+  status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
+  if ( sret != status_t::SUCCESS) {
+    sret = checkOrNewConn(node_rank, ConnType::UCX, &ip);
+    if ( sret != status_t::SUCCESS) {
+      return sret;
+    }
+  }
+
+  // todo
+  
+  return status_t::SUCCESS;
 };
 
 status_t Communicator::connectTo(uint32_t node_rank, ConnType connType) {
@@ -175,7 +200,7 @@ Communicator::_getAddrByRank(uint32_t node_rank) {
   return &it->second;
 };
 
-// [discard] 采用conn_manager的withEndpoint管理ep生命周期
+// [discard] 现在采用conn_manager的withEndpoint管理ep生命周期
 // Endpoint *Communicator::_getEndpointByRank(uint32_t node_rank) {
 //   auto addr = _getAddrByRank(node_rank);
 //   if (addr == nullptr) {
@@ -197,8 +222,8 @@ Communicator::_getAddrByRank(uint32_t node_rank) {
 //   node_rank); return nullptr;
 // };
 
-/* ConnBuffer */
 
+/* ConnBuffer */
 ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type)
     : buffer_size(buffer_size) {
   mem_ops = new Memory(1, mem_type);
