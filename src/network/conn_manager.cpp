@@ -48,6 +48,18 @@ status_t ConnManager::initiateServer(std::string ip, uint16_t port,
   return status_t::SUCCESS;
 };
 
+status_t ConnManager::stopServer() {
+  if (server) {
+    server->stopListen();
+    // 等待 server thread 退出
+    if (server_thread.joinable()) {
+      server_thread.join();
+    }
+  }
+
+  return status_t::SUCCESS;
+};
+
 status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
                                                  uint16_t targetPort,
                                                  ConnType clientType) {
@@ -73,9 +85,8 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
   }
 
   std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
-  // endpoint_map[targetIp] = std::move(endpoint);
   auto &entry = endpoint_map[targetIp];
-  std::lock_guard<std::mutex> entry_lock(entry.mutex);
+  // std::lock_guard<std::mutex> entry_lock(entry.mutex); // 必是单独访问,不需要锁
   entry.endpoint = std::move(endpoint);
 
   return status_t::SUCCESS;
@@ -86,9 +97,8 @@ void ConnManager::_addEndpoint(std::string ip,
   if (endpoint) {
     std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
     auto &entry = endpoint_map[ip];
-    std::lock_guard<std::mutex> entry_lock(entry.mutex);
+    // std::lock_guard<std::mutex> entry_lock(entry.mutex);  // 必是单独访问,不需要锁
     entry.endpoint = std::move(endpoint);
-    // endpoint_map[ip] = std::move(endpoint);
   } else {
     logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");
   }
@@ -109,11 +119,13 @@ void ConnManager::_removeEndpoint(std::string ip) {
     if (it == endpoint_map.end())
       return;
     // 锁定条目后转移所有权
-    std::lock_guard<std::mutex> entry_lock(it->second.mutex);
+    // 强制删除ep时,无需锁,因为一方已经决定要断开了
     to_delete = std::move(it->second.endpoint);
     endpoint_map.erase(it);
   }
   // 在此处同步等待资源释放
+  to_delete.reset(); // 显式的关闭ep
+  return;
 }
 
 ConnManager::~ConnManager() {

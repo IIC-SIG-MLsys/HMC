@@ -40,6 +40,7 @@ public:
   UCXServer(std::shared_ptr<ConnManager> conn_manager);
 
   status_t listen(std::string ip, uint16_t port) override;
+  status_t stopListen() override;
   std::unique_ptr<Endpoint> handleConnection(std::string ip, uint16_t port);
 
   ~UCXServer();

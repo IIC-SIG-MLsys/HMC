@@ -27,7 +27,8 @@ struct __attribute((packed)) rdma_buffer_attr {
   uint64_t address;
   uint32_t length;
   uint32_t key;
-  struct UHMBufferState uhm_buffer_state;
+  uint64_t uhm_buffer_state_address;
+  uint32_t uhm_buffer_state_key;
 };
 
 class RDMAEndpoint : public Endpoint {
@@ -71,6 +72,7 @@ public:
   // size_t buffer_size = 0;
   std::shared_ptr<ConnBuffer> buffer;
   bool is_buffer_ok = false;
+  status_t connStatus = status_t::ERROR; // 连接成功后转为SUCCESS 
 
   // the RDMA connection identifier : cm(connection management)
   struct rdma_cm_id *cm_id = NULL; // server创建的时候传入的是remote_cm_id
@@ -85,9 +87,11 @@ public:
   struct ibv_mr *remote_metadata_mr = NULL;
   struct ibv_mr *local_metadata_mr = NULL;
   struct ibv_mr *buffer_mr = NULL;
+  struct ibv_mr *uhm_buffer_state_mr = NULL;
   // RDMA buffer attributes
   struct rdma_buffer_attr remote_metadata_attr;
   struct rdma_buffer_attr local_metadata_attr;
+  struct UHMBufferState uhm_buffer_state;
   // Event Channel : report asynchronous communication event
   struct rdma_event_channel *cm_event_channel = NULL;
   // Completion Channel
@@ -112,6 +116,7 @@ public:
   status_t listen(std::string ip, uint16_t port) override;
   std::unique_ptr<Endpoint> handleConnection(rdma_cm_id *id);
 
+  status_t stopListen() override;
 private:
   std::shared_ptr<ConnBuffer> buffer;
   struct rdma_cm_id *server_cm_id = NULL; // server用来监听的cm

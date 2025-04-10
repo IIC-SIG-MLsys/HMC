@@ -96,6 +96,7 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
         logError("Server::Start: Failed to acknowledge cm event");
         continue;
       }
+      rdma_disconnect(event_copy.id); // 双向断连机制,需要服务端也回复断开
       conn_manager->_removeEndpoint(recv_ip);
       // conn_manager->_printEndpointMap();
       logInfo("Disconnect success");
@@ -204,6 +205,7 @@ std::unique_ptr<Endpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
   logDebug("Server new connection started successfully");
 
   // 成功创建
+  endpoint->connStatus = status_t::SUCCESS;
   return endpoint;
 
 failed:
@@ -274,11 +276,20 @@ status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
   logDebug("Server::exchange_metadata: Remote metadata:");
   endpoint->showRdmaBufferAttr(&endpoint->remote_metadata_attr);
 
-  /** TODO：在endpoint->setupBuffers()增加，支持更多的数据buffer **/
-
   if (endpoint->remote_metadata_attr.address == 0) {
     logError("Server::exchange_metadata: Failed to get remote metadata");
     return status_t::ERROR;
+  }
+  return status_t::SUCCESS;
+}
+
+status_t RDMAServer::stopListen() {
+  std::raise(SIGINT);
+  // 唤醒 server 监听线程（阻塞在event_channel上）
+  // 创建 dummy cm_id 打断 rdma_cm_get_event
+  rdma_cm_id *dummy_id = nullptr;
+  if (rdma_create_id(cm_event_channel, &dummy_id, nullptr, RDMA_PS_TCP) == 0) {
+    rdma_destroy_id(dummy_id); // destroy 之后会触发一个 event
   }
   return status_t::SUCCESS;
 }

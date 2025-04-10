@@ -78,10 +78,11 @@ public:
   status_t readFrom(uint32_t node_rank, size_t ptr_bias, size_t size,
                     ConnType connType = ConnType::RDMA);
 
-  status_t sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size); // uhm interface, for big data
-  status_t recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, size_t *flag); // flag, recv size
+  status_t sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size, MemoryType buf_type); // uhm interface, for big data
+  status_t recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, MemoryType buf_type, size_t *flag); // flag, recv size
 
   status_t initServer(std::string ip, uint16_t port, ConnType serverType);
+  status_t closeServer();
   status_t connectTo(uint32_t node_rank, ConnType connType);
   status_t disConnect(uint32_t node_rank, ConnType connType);
   status_t checkConn(uint32_t node_rank, ConnType connType);

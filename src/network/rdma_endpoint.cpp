@@ -9,8 +9,8 @@ RDMAEndpoint::RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer)
     : buffer(buffer){};
 
 RDMAEndpoint::~RDMAEndpoint() {
-  if (role == EndpointType::Client) {
-    closeEndpoint(); // 目前只有client进行断开操作
+  if (role == EndpointType::Client && connStatus == status_t::SUCCESS) {
+    closeEndpoint(); // 目前只有在连接正常时，在client侧进行断开操作
   }
   cleanRdmaResources();
 };
@@ -120,8 +120,16 @@ status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
   const int max_wcs = cq_capacity; // 可根据实际情况调整大小
   std::vector<struct ibv_wc> wcs(max_wcs);
 
-  int total_processed = 0;
+  if (num_completions_to_process == 0) { // 为0表示一次处理所有能处理的事件
+    int poll_result;
+    do {
+      poll_result = ibv_poll_cq(cq, max_wcs, wcs.data());
+    } while (poll_result == 0);
+    return status_t::SUCCESS;
+  }
 
+  // 指定个数，则按照个数处理
+  int total_processed = 0;
   while (total_processed < num_completions_to_process) {
     // 尽可能多地获取完成事件
     int num_completions = ibv_poll_cq(cq, max_wcs, wcs.data());
@@ -175,7 +183,7 @@ status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
         return status_t::ERROR;
       } else {
         // 处理成功的完成事件
-        logDebug("Completion event processed successfully");
+        // logDebug("Completion event processed successfully");
       }
 
       total_processed++;
@@ -191,39 +199,206 @@ status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
 }
 
 status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) {
+  status_t ret;
+
   const size_t half_buffer_size = buffer->buffer_size / 2;
-  const size_t num_send_chunks =
-      (send_flags + half_buffer_size - 1) / half_buffer_size;
-
-  // 标志位初始化, send使用remote_metadata_attr
-  remote_metadata_attr.uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
-  remote_metadata_attr.uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
-
+  const size_t num_send_chunks = (send_flags + half_buffer_size - 1) / half_buffer_size;
   size_t current_chunk = 0;
-  status_t ret = status_t::SUCCESS;
-
-  // 预先拷贝第一个chunk的数据
   size_t chunk_index = 0;
   size_t send_size = std::min(half_buffer_size, send_flags);
 
-  mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, send_size) : buffer->writeFromGpu(input_buffer, send_size);
+  // 发送标志位，通知对面要发送多少数据
+  uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
+  uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
+  uhm_buffer_state.length = send_flags;
+  void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state);
+  void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address);
+  ret = postWrite(localAddr, remoteAddr, sizeof(uhm_buffer_state), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);
+  if (ret != status_t::SUCCESS) {
+    logError("Client::Send: Failed to post write buffer state");
+    return ret;
+  }
+  // 首次缓冲区拷贝
+  mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, send_size, 0) : buffer->writeFromGpu(input_buffer, send_size, 0);
+  // 处理发送事件
+  if (pollCompletion(1) != status_t::SUCCESS) {
+    logError("Client::Send: Failed to poll completion for chunk %zu",
+              current_chunk);
+    return status_t::ERROR;
+  }
 
   while (current_chunk < num_send_chunks) {
     chunk_index = current_chunk % 2;
     size_t next_chunk_index = (current_chunk + 1) % 2;
-    logDebug(
-        "Client::Send: current_chunk %ld, chunk_index %ld, num_send_chunks %ld",
-        current_chunk, chunk_index, num_send_chunks);
+    // logDebug(
+    //     "Client::Send: current_chunk %ld, chunk_index %ld, num_send_chunks %ld",
+    //     current_chunk, chunk_index, num_send_chunks);
 
-    // todo
-  
+    // 远端会通过write改变本地uhm_buffer_state对应位置的状态
+    // 首先检查状态能不能写入远端
+    const int SPIN_COUNT =
+        100; // 3ghz的cpu，4000次大约相当于200us，100相当于5us
+
+    while (uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
+      int spin = 0;
+      while (spin++ < SPIN_COUNT &&
+             uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
+        // 使用 CPU pause 指令，减少功耗并优化自旋等待
+        #if defined(__x86_64__) || defined(_M_X64)
+        __builtin_ia32_pause();
+        #elif defined(__aarch64__)
+        asm volatile("yield");
+        #endif
+      }
+      if (uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
+        // 超过自旋次数后短暂让出CPU
+        std::this_thread::yield();
+      }
+    }
+
+    // 计算当前块的实际大小
+    size_t remaining = send_flags - current_chunk * half_buffer_size;
+    send_size = std::min(half_buffer_size, remaining);
+
+    // 可写，写当前块到远端
+    ret = writeDataNB(chunk_index * half_buffer_size, half_buffer_size);
+    if (ret != status_t::SUCCESS) {
+      logError("Client::Send: Failed to post write data for chunk %zu", current_chunk);
+      return ret;
+    }
+    // logDebug("Client::Send success");
+
+    // 发送标志位
+    uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_READ;
+    void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) + chunk_index * sizeof(UHM_STATE_TYPE);
+    void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) + chunk_index * sizeof(UHM_STATE_TYPE);
+    ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);
+    if (ret != status_t::SUCCESS) {
+      logError("Client::Send: Failed to post write buffer state");
+      return ret;
+    }
+
+    // rdma对一个qp内的事件做保序
+    // 只有当还有下一块数据时才进行拷贝
+    if (current_chunk + 1 < num_send_chunks) {
+      size_t next_remaining = send_flags - (current_chunk + 1) * half_buffer_size;
+      size_t next_size = std::min(half_buffer_size, next_remaining);
+
+      size_t bias = next_chunk_index * half_buffer_size;
+      void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) * half_buffer_size;
+      mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, next_size, bias) : buffer->writeFromGpu(input_buffer, next_size, bias);
+    }
+
+    // 等待向远端写操作完成
+    if (pollCompletion(2) != status_t::SUCCESS) {
+      logError("Client::Send: Failed to poll completion for chunk %zu", current_chunk);
+      return status_t::ERROR;
+    }
+
+    // logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk, send_size);
+    current_chunk++;
   }
 
+  // logDebug("Client::Send: sent finished");
   return status_t::SUCCESS;
 }
 status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
                       size_t *recv_flags, MemoryType mem_type) {
-  // 标志位初始化, recv使用local_metadata_attr
+  status_t ret;
+  size_t current_chunk = 0;
+  size_t chunk_index = 0;
+  size_t accumulated_size = 0;
+  size_t recv_size = 0;
+  const size_t half_buffer_size = buffer->buffer_size / 2;
+  size_t num_recv_chunks = 0;
+
+  // 初始化uhm_buffer_state，为了接受消息，先置可读
+  uhm_buffer_state.state[0] = UHM_BUFFER_CAN_READ;
+  uhm_buffer_state.state[1] = UHM_BUFFER_CAN_READ;
+  uhm_buffer_state.length = 0;
+  // logDebug("Server::Recv: uhm_buffer_state %d", this->uhm_buffer_state.state[0]);
+
+  // 接收要传入的块数量
+  const int SPIN_COUNT = 1; // 3ghz的cpu，4000次大约相当于200us，10:0.05us
+  while (true) {
+      auto tmp = uhm_buffer_state;
+      if (tmp.state[chunk_index] == UHM_BUFFER_CAN_WRITE) {
+        // 检查接收大小的合法性
+        *recv_flags  = tmp.length;
+        if (*recv_flags == 0) {
+          logError("Server::Recv: Invalid receive size is 0");
+          return status_t::ERROR;
+        }
+        num_recv_chunks = (*recv_flags + half_buffer_size - 1) / half_buffer_size;
+        this->uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE; // 正确获取到flag，开始等对方写
+        this->uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
+        break;
+      }
+
+      // hygon cpu has bug，which need a small time block.
+      int spin = 0;
+      while (spin++ < SPIN_COUNT &&
+             this->uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
+      // 使用 CPU pause 指令，减少功耗并优化自旋等待
+      #if defined(__x86_64__) || defined(_M_X64)
+              __builtin_ia32_pause();
+      #elif defined(__aarch64__)
+              asm volatile("yield");
+      #endif
+      }
+  }
+  // logDebug("recv_flags %zu, current chunk %zu, num_recv_chunks %zu\n", *recv_flags, current_chunk, num_recv_chunks);
+
+  while (current_chunk < num_recv_chunks) {
+    chunk_index = current_chunk % 2;
+    if (this->uhm_buffer_state.state[chunk_index] == UHM_BUFFER_CAN_READ) {
+      // 直接同步通知对面可写
+      this->uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_WRITE; 
+      void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) + chunk_index * sizeof(UHM_STATE_TYPE);
+      void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) + chunk_index * sizeof(UHM_STATE_TYPE);
+      ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);   
+      if (ret != status_t::SUCCESS) {
+        logError("Server::Recv: Failed to post write buffer state");
+        return ret;
+      }
+
+      // 接收大小
+      if(current_chunk == num_recv_chunks - 1){ // 最后一次接收
+        recv_size = *recv_flags - accumulated_size;
+      } else {
+        recv_size = half_buffer_size;
+      }
+      // 检查接收大小的合法性
+      if (recv_size == 0) {
+        logError("Server::Recv: Invalid receive size is 0");
+        return status_t::ERROR;
+      } else if (recv_size > buffer_size)
+      {
+        logError("Server::Recv: Invalid receive size %zu is bigger than buffer size %zu", recv_size, buffer_size);
+        return status_t::ERROR;
+      } else if (accumulated_size + recv_size > buffer_size)
+      {
+        logError("Server::Recv: Invalid accumulated_size + recv_size > buffer_size");
+        return status_t::ERROR;
+      }
+
+      // 拷贝到输出缓冲区
+      size_t bias = chunk_index * half_buffer_size;
+      void* dest = static_cast<char *>(output_buffer) + accumulated_size;
+      mem_type == MemoryType::CPU ? buffer->readToCpu(dest, recv_size, bias) : buffer->readToGpu(dest, recv_size, bias);
+    
+
+      // 处理通知完成消息，防止漏掉结束消息
+      if (pollCompletion(0) != status_t::SUCCESS) {
+        logError("Failed to poll completion queue");
+        return status_t::ERROR;
+      }
+
+      // std::cout<<"\tcurrent chunk\t"<<current_chunk<<"\ttotal chunk\t"<<num_recv_chunks<<"\n";
+      accumulated_size += recv_size;
+      current_chunk++;
+    }
+  };
 
   return status_t::SUCCESS;
 }
@@ -259,8 +434,16 @@ status_t RDMAEndpoint::setupBuffers() {
   local_metadata_attr.length = buffer->buffer_size;
   local_metadata_attr.key = buffer_mr->lkey;
 
-  /** TODO：在这里增加，支持更多的数据buffer; 在exchangeMetadata完成数据信息交换
+  /** TODO：在这里增加，支持更多的数据buffer; 在metadata里面存好相关地址和key
    * **/
+  ret = registerMemory(&uhm_buffer_state, sizeof(uhm_buffer_state),
+                       &uhm_buffer_state_mr);
+  if (ret != status_t::SUCCESS) {
+    logError("Error while register uhm_buffer_state");
+    return ret;
+  }
+  local_metadata_attr.uhm_buffer_state_address = (uint64_t)&uhm_buffer_state;
+  local_metadata_attr.uhm_buffer_state_key = uhm_buffer_state_mr->lkey;
 
   return status_t::SUCCESS;
 }
@@ -376,6 +559,7 @@ void RDMAEndpoint::showRdmaBufferAttr(const struct rdma_buffer_attr *attr) {
   logInfo("  address: 0x%lx\n", attr->address);
   logInfo("  length: %u\n", attr->length);
   logInfo("  key: 0x%x\n", attr->key);
+  logInfo("  uhm_buffer_state address: 0x%lx\n", attr->uhm_buffer_state_address);
 }
 
 void RDMAEndpoint::cleanRdmaResources() {
@@ -402,6 +586,10 @@ void RDMAEndpoint::cleanRdmaResources() {
   if (remote_metadata_mr) {
     deRegisterMemory(remote_metadata_mr);
     remote_metadata_mr = nullptr;
+  }
+  if (uhm_buffer_state_mr) {
+    deRegisterMemory(uhm_buffer_state_mr);
+    uhm_buffer_state_mr = nullptr;
   }
   if (cm_event_channel) {
     rdma_destroy_event_channel(cm_event_channel);

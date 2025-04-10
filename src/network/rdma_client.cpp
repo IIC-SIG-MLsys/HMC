@@ -156,6 +156,7 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
       goto failed;
     }
     logDebug("Client started successfully");
+    endpoint->connStatus = status_t::SUCCESS;
     return endpoint;
 
   retry:
@@ -244,8 +245,6 @@ status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
   endpoint->showRdmaBufferAttr(&endpoint->local_metadata_attr);
   logDebug("Client::exchange_metadata: Remote metadata:");
   endpoint->showRdmaBufferAttr(&endpoint->remote_metadata_attr);
-
-  /** TODO：在endpoint->setupBuffers()增加，支持更多的数据buffer **/
 
   if (endpoint->remote_metadata_attr.address == 0) {
     logError("Client::exchange_metadata: Failed to get remote metadata");

@@ -12,6 +12,7 @@ void signal_handler(int sig) {
   if (sig == SIGINT) { // capture Ctrl+C
     running = false;
     logError("Caught Ctrl+C, preparing to exit...");
+    exit(-1);
   }
 }
 

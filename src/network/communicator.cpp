@@ -83,7 +83,7 @@ status_t Communicator::readFrom(uint32_t node_rank, size_t ptr_bias,
       });
 };
 
-status_t Communicator::sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size) {
+status_t Communicator::sendDataTo(uint32_t node_rank, void *send_buf, size_t buf_size, MemoryType buf_type) {
   std::string ip;
   status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
   if ( sret != status_t::SUCCESS) {
@@ -93,12 +93,15 @@ status_t Communicator::sendDataTo(uint32_t node_rank, void *send_buf, size_t buf
     }
   }
 
-  // todo
-
-  return status_t::SUCCESS;
+  return conn_manager->withEndpoint(
+      ip, [send_buf, buf_size, buf_type](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->uhm_send(send_buf, buf_size, buf_type);
+      });
 };
 
-status_t Communicator::recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, size_t *flag) {
+status_t Communicator::recvDataFrom(uint32_t node_rank, void *recv_buf, size_t buf_size, MemoryType buf_type, size_t *flag) {
   std::string ip;
   status_t sret = checkOrNewConn(node_rank, ConnType::RDMA, &ip);
   if ( sret != status_t::SUCCESS) {
@@ -108,9 +111,12 @@ status_t Communicator::recvDataFrom(uint32_t node_rank, void *recv_buf, size_t b
     }
   }
 
-  // todo
-  
-  return status_t::SUCCESS;
+  return conn_manager->withEndpoint(
+      ip, [recv_buf, buf_size, flag, buf_type](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->uhm_recv(recv_buf, buf_size, flag, buf_type);
+      });
 };
 
 status_t Communicator::connectTo(uint32_t node_rank, ConnType connType) {
@@ -134,6 +140,10 @@ status_t Communicator::connectTo(uint32_t node_rank, ConnType connType) {
 status_t Communicator::initServer(std::string ip, uint16_t port,
                                   ConnType serverType) {
   return conn_manager->initiateServer(ip, port, serverType);
+};
+
+status_t Communicator::closeServer(){
+  return conn_manager->stopServer();
 };
 
 status_t Communicator::disConnect(uint32_t node_rank, ConnType connType) {

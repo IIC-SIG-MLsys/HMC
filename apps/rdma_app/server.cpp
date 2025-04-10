@@ -3,55 +3,131 @@
 #include <hmc.h>
 #include <iostream>
 #include <thread>
+#include <cmath>
+#include <vector>
+#include <mutex>
 
 using namespace hmc;
+
+struct RecvContext {
+  int id;
+  Communicator* comm;
+  uint8_t* dest_ptr;
+  size_t size;
+  std::mutex* log_mutex;
+};
+
+void recv_channel_slice(RecvContext ctx) {
+  size_t flags;
+  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[Channel " << ctx.id << "] Receive failed.";
+    return;
+  }
+}
 
 int main() {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
 
-  int device_id = 1; // 根据实际情况设置设备ID
-  size_t buffer_size = 1 * 1024 * 1024;
+  const int channel_count = 1;
+  const std::string server_ip = "192.168.2.241";
+  const int base_port = 2025;
 
-  // 创建连接缓冲区
-  auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
-  std::cout << "Allocate buffer success: " << buffer->ptr << std::endl;
+  const int device_id = 1;
+  const size_t buffer_size = 32 * 8 * 1024;
 
-  // 创建通信器
-  Communicator *comm = new Communicator(buffer);
-  std::cout << "Create communicator success" << std::endl;
+  std::vector<std::shared_ptr<ConnBuffer>> buffers;
+  std::vector<Communicator*> communicators;
+  std::mutex log_mutex;
 
-  // 初始化服务器
-  comm->initServer("192.168.2.241", 2025, ConnType::RDMA);
-  comm->addNewRankAddr(1, "192.168.2.241", 2024); // 添加客户端地址
-  // comm->addNewRankAddr(0, "192.168.2.241", 2025);     // 服务端自身地址
-
-  // 等待连接建立
-  std::this_thread::sleep_for(std::chrono::seconds(3));
-
-  char host_data[1024];
-  size_t data_size = 1024;
-  size_t read_bias = 0;
-  status_t read_status;
-
-  // 接收数据流程
-  for (int i = 0; i < 2; ++i) {
-    std::this_thread::sleep_for(std::chrono::seconds(1));
-    // 从缓冲区读取到主机内存
-    read_status = buffer->readToCpu(host_data, data_size, read_bias);
-    if (read_status == status_t::SUCCESS) {
-      std::cout << "Server get data: " << host_data << std::endl;
-    } else {
-      std::cerr << "Failed to read data from buffer" << std::endl;
-      goto failed;
+  // 初始化每个通信器并监听不同端口
+  for (int i = 0; i < channel_count; ++i) {
+    auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
+    Communicator* comm = new Communicator(buffer);
+    if (comm->initServer(server_ip, base_port + i, ConnType::RDMA) != status_t::SUCCESS) {
+      LOG(ERROR) << "Channel " << i << " server init failed.";
+      return -1;
     }
-    std::this_thread::sleep_for(std::chrono::seconds(2));
+    comm->addNewRankAddr(0, server_ip, 0); // 对端端口随便写，仅用作 passive recv
+    communicators.push_back(comm);
+    buffers.push_back(buffer);
   }
 
-failed:
-  // 清理资源
-  delete comm;
-  buffer.reset();
-  std::cout << "Communicator released" << std::endl;
+  // 等待所有通道连接完成
+  for (int i = 0; i < channel_count; ++i) {
+    while (communicators[i]->checkConn(0, ConnType::RDMA) != status_t::SUCCESS) {
+      std::this_thread::sleep_for(std::chrono::microseconds(10));
+    }
+    LOG(INFO) << "Channel " << i << " connected.";
+  }
+
+  LOG(INFO) << "All channels connected. Ready to receive.";
+
+  // 多通道接收循环
+  for (int power = 20; power <= 30; ++power) {
+    const size_t total_size = std::pow(2, power);
+    std::vector<uint8_t> full_data(total_size);
+
+    size_t slice_size = total_size / channel_count;
+    std::vector<std::thread> threads;
+
+    LOG(INFO) << "=== Receiving " << total_size / (1024 * 1024)
+              << " MB via " << channel_count << " channels ===";
+
+    auto start_time = std::chrono::high_resolution_clock::now();
+
+    for (int i = 0; i < channel_count; ++i) {
+      uint8_t* slice_ptr = full_data.data() + i * slice_size;
+      size_t actual_size = (i == channel_count - 1)
+                              ? total_size - i * slice_size
+                              : slice_size;
+
+      RecvContext ctx = {
+          .id = i,
+          .comm = communicators[i],
+          .dest_ptr = slice_ptr,
+          .size = actual_size,
+          .log_mutex = &log_mutex
+      };
+      threads.emplace_back(recv_channel_slice, ctx);
+    }
+
+    for (auto& t : threads) t.join();
+
+    auto end_time = std::chrono::high_resolution_clock::now();
+    std::chrono::duration<double> duration = end_time - start_time;
+    double seconds = duration.count();
+
+    double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
+    double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
+
+    LOG(INFO) << ">>> Total Size: " << total_size / (1024 * 1024) << " MB"
+              << ", Time: " << seconds << " s"
+              << ", Aggregate Throughput: "
+              << throughput_MBps << " MB/s ("
+              << throughput_Gbps << " Gbps)";
+
+    // 简单数据完整性检查
+    bool valid = true;
+    for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
+      if (full_data[i] != 'A') {
+        valid = false;
+        break;
+      }
+    }
+    LOG(INFO) << "Data Integrity: " << (valid ? "PASS" : "FAIL");
+    LOG(INFO) << "----------------------------";
+
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+
+  // 清理
+  for (int i = 0; i < channel_count; ++i) {
+    communicators[i]->closeServer();
+    delete communicators[i];
+  }
+
+  std::cout << "Server shutdown complete." << std::endl;
   return 0;
 }

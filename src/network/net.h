@@ -62,7 +62,7 @@ public:
 
   // 监听连接请求
   virtual status_t listen(std::string ip, uint16_t port) = 0;
-
+  virtual status_t stopListen() = 0;
 protected:
   std::shared_ptr<ConnManager> conn_manager;
 };
@@ -82,12 +82,13 @@ class ConnManager : public std::enable_shared_from_this<ConnManager> {
 public:
   struct EndpointEntry {
     std::unique_ptr<Endpoint> endpoint;
-    std::mutex mutex;
+    std::mutex mutex; // 排他性使用, ep一次只可以被一个调用使用
   };
 
   ConnManager(std::shared_ptr<ConnBuffer> buffer);
   // shared ptr 不能在构造函数里面shared from this,需要构造完成后，单独初始化
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
+  status_t stopServer();
 
   // 客户端发起的连接操作
   status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort,
@@ -117,7 +118,7 @@ public:
     }
 
     // 第二阶段：锁定并执行操作
-    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    std::lock_guard<std::mutex> entry_lock(entry->mutex); // ep的使用必须排他性
     if (!entry->endpoint) {
       return status_t::ERROR; // endpoint未找到
     }
