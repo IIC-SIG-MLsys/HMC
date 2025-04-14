@@ -2,9 +2,9 @@
 #include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
-#include <thread>
 #include <cmath>
 #include <vector>
+#include <future>
 
 using namespace hmc;
 
@@ -31,7 +31,7 @@ int main() {
   const int base_port = 2025;
 
   const int device_id = 1;
-  const size_t buffer_size =  32 * 8 * 1024;
+  const size_t buffer_size = 2048ULL * 1024 * 16; // 32MB
 
   std::vector<std::shared_ptr<ConnBuffer>> buffers;
   std::vector<Communicator*> communicators;
@@ -48,17 +48,16 @@ int main() {
 
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  for (int power = 20; power <= 30; ++power) {
-    const size_t total_size = std::pow(2, power);
-    std::vector<uint8_t> host_data(total_size, 'A');
+  for (int power = 25; power <= 30; ++power) {
+  const size_t total_size = std::pow(2, power);
+  std::vector<uint8_t> host_data(total_size, 'A');
+  size_t slice_size = total_size / channel_count;
 
-    size_t slice_size = total_size / channel_count;
-    std::vector<std::thread> threads;
+  const int repeat = 3;
+  double total_MBps = 0.0;
 
-    LOG(INFO) << "=== Sending " << total_size / (1024 * 1024)
-              << " MB via " << channel_count << " channels ===";
-
-    // 🌟 总开始时间
+  for (int r = 0; r < repeat; ++r) {
+    std::vector<std::future<void>> futures;
     auto start_time = std::chrono::high_resolution_clock::now();
 
     for (int i = 0; i < channel_count; ++i) {
@@ -73,30 +72,38 @@ int main() {
           .data_ptr = slice_ptr,
           .size = actual_size};
 
-      LOG(INFO) << "=== slice size " << slice_size;
-      LOG(INFO) << "=== actual size " << actual_size;
-
-      threads.emplace_back(send_channel_slice, ctx);
+      futures.emplace_back(std::async(std::launch::async, send_channel_slice, ctx));
     }
 
-    for (auto& t : threads) t.join();
-
-    // 🌟 总结束时间
+    for (auto& f : futures) f.get();
     auto end_time = std::chrono::high_resolution_clock::now();
+
     std::chrono::duration<double> duration = end_time - start_time;
     double seconds = duration.count();
 
     double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
     double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
 
-    LOG(INFO) << ">>> Total Size: " << total_size / (1024 * 1024) << " MB"
-              << ", Time: " << seconds << " s"
-              << ", Aggregate Throughput: "
+    total_MBps += throughput_MBps;
+
+    LOG(INFO) << "[Trial " << r + 1 << "] "
+              << total_size / (1024 * 1024) << " MB sent in "
+              << seconds << " s, "
               << throughput_MBps << " MB/s ("
               << throughput_Gbps << " Gbps)";
-
-    std::this_thread::sleep_for(std::chrono::seconds(5)); // 间隔太短，有可能发串
+    std::this_thread::sleep_for(std::chrono::seconds(3));
   }
+
+  double avg_MBps = total_MBps / repeat;
+  double avg_Gbps = avg_MBps * 1024.0 * 1024.0 * 8 / 1e9;
+
+  LOG(INFO) << ">>> Average over " << repeat << " trials: "
+            << avg_MBps << " MB/s ("
+            << avg_Gbps << " Gbps)";
+  LOG(INFO) << "--------------------------------------------";
+
+  std::this_thread::sleep_for(std::chrono::seconds(3));
+}
 
   for (int i = 0; i < channel_count; ++i) {
     communicators[i]->disConnect(0, ConnType::RDMA);
@@ -106,13 +113,3 @@ int main() {
   std::cout << "Client finished all transfers" << std::endl;
   return 0;
 }
-
-/*
-8Gbps
-|
-v
-4.85Gbps
-|
-v
-
-*/

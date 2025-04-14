@@ -2,10 +2,10 @@
 #include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
-#include <thread>
 #include <cmath>
 #include <vector>
 #include <mutex>
+#include <future>
 
 using namespace hmc;
 
@@ -35,13 +35,12 @@ int main() {
   const int base_port = 2025;
 
   const int device_id = 1;
-  const size_t buffer_size = 32 * 8 * 1024;
+  const size_t buffer_size = 2048ULL * 1024 * 16; // 32MB
 
   std::vector<std::shared_ptr<ConnBuffer>> buffers;
   std::vector<Communicator*> communicators;
   std::mutex log_mutex;
 
-  // 初始化每个通信器并监听不同端口
   for (int i = 0; i < channel_count; ++i) {
     auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
     Communicator* comm = new Communicator(buffer);
@@ -49,12 +48,11 @@ int main() {
       LOG(ERROR) << "Channel " << i << " server init failed.";
       return -1;
     }
-    comm->addNewRankAddr(0, server_ip, 0); // 对端端口随便写，仅用作 passive recv
+    comm->addNewRankAddr(0, server_ip, 0);
     communicators.push_back(comm);
     buffers.push_back(buffer);
   }
 
-  // 等待所有通道连接完成
   for (int i = 0; i < channel_count; ++i) {
     while (communicators[i]->checkConn(0, ConnType::RDMA) != status_t::SUCCESS) {
       std::this_thread::sleep_for(std::chrono::microseconds(10));
@@ -64,16 +62,16 @@ int main() {
 
   LOG(INFO) << "All channels connected. Ready to receive.";
 
-  // 多通道接收循环
-  for (int power = 20; power <= 30; ++power) {
-    const size_t total_size = std::pow(2, power);
+  for (int power = 25; power <= 30; ++power) {
+  const size_t total_size = std::pow(2, power);
+  size_t slice_size = total_size / channel_count;
+
+  const int repeat = 3;
+  double total_MBps = 0.0;
+
+  for (int r = 0; r < repeat; ++r) {
     std::vector<uint8_t> full_data(total_size);
-
-    size_t slice_size = total_size / channel_count;
-    std::vector<std::thread> threads;
-
-    LOG(INFO) << "=== Receiving " << total_size / (1024 * 1024)
-              << " MB via " << channel_count << " channels ===";
+    std::vector<std::future<void>> futures;
 
     auto start_time = std::chrono::high_resolution_clock::now();
 
@@ -90,10 +88,11 @@ int main() {
           .size = actual_size,
           .log_mutex = &log_mutex
       };
-      threads.emplace_back(recv_channel_slice, ctx);
+
+      futures.emplace_back(std::async(std::launch::async, recv_channel_slice, ctx));
     }
 
-    for (auto& t : threads) t.join();
+    for (auto& f : futures) f.get();
 
     auto end_time = std::chrono::high_resolution_clock::now();
     std::chrono::duration<double> duration = end_time - start_time;
@@ -102,13 +101,8 @@ int main() {
     double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
     double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
 
-    LOG(INFO) << ">>> Total Size: " << total_size / (1024 * 1024) << " MB"
-              << ", Time: " << seconds << " s"
-              << ", Aggregate Throughput: "
-              << throughput_MBps << " MB/s ("
-              << throughput_Gbps << " Gbps)";
+    total_MBps += throughput_MBps;
 
-    // 简单数据完整性检查
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
       if (full_data[i] != 'A') {
@@ -116,13 +110,28 @@ int main() {
         break;
       }
     }
-    LOG(INFO) << "Data Integrity: " << (valid ? "PASS" : "FAIL");
-    LOG(INFO) << "----------------------------";
+
+    LOG(INFO) << "[Trial " << r + 1 << "] "
+              << total_size / (1024 * 1024) << " MB received in "
+              << seconds << " s, "
+              << throughput_MBps << " MB/s ("
+              << throughput_Gbps << " Gbps), "
+              << "Data Integrity: " << (valid ? "PASS" : "FAIL");
+
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+
+    double avg_MBps = total_MBps / repeat;
+    double avg_Gbps = avg_MBps * 1024.0 * 1024.0 * 8 / 1e9;
+
+    LOG(INFO) << ">>> Average over " << repeat << " trials: "
+              << avg_MBps << " MB/s ("
+              << avg_Gbps << " Gbps)";
+    LOG(INFO) << "--------------------------------------------";
 
     std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
-  // 清理
   for (int i = 0; i < channel_count; ++i) {
     communicators[i]->closeServer();
     delete communicators[i];
