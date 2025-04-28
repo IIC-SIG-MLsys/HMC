@@ -4,7 +4,7 @@ enable_language(CXX)
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
-
+set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -w")
 # # cmake modules
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
@@ -84,6 +84,23 @@ endif()
 add_library(hmc_shared_lib SHARED ${SRC_RECURSE})
 target_include_directories(hmc_shared_lib PUBLIC include)
 
+target_include_directories(hmc_shared_lib PUBLIC src/resource_manager)
+target_include_directories(hmc_shared_lib PUBLIC src/network)
+target_include_directories(hmc_shared_lib PUBLIC src/utils)
+
+
+if(ROCM_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${HIP_LIBRARIES})
+elseif(CUDA_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${CUDA_LIBRARIES})
+elseif(NEUWARE_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${NEUWARE_LIBRARIES})
+elseif(HUAWEI_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${HUAWEI_LIBRARIES} ${ASCENDCL_LIBRARY})
+else()
+  message(FATAL_ERROR "ROCm or CUDA or NEUWARE or HUAWEI is required but was not found.")
+endif()
+
 # with rdma
 if(RDMA_FOUND)
     target_include_directories(hmc_shared_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
@@ -129,8 +146,8 @@ install(DIRECTORY include/ DESTINATION include)
 
 
 # # build apps
-add_subdirectory(apps/rdma_app)
-add_subdirectory(apps/comm_app)
+# add_subdirectory(apps/rdma_app)
+# add_subdirectory(apps/comm_app)
 # add_subdirectory(apps/python_app)
 
 # # build test

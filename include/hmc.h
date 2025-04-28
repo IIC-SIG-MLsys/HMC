@@ -19,6 +19,8 @@
 #include "mlu_op.h"
 #endif
 
+#include "log.h"
+#include "signal_handle.h"
 #include "mem.h"
 #include "status.h"
 

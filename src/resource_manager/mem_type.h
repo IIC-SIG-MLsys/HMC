@@ -4,7 +4,7 @@
 #ifndef HMC_MEM_TYPE_H
 #define HMC_MEM_TYPE_H
 
-#include "../utils/log.h"
+#include <log.h>
 #include <mem.h>
 
 // #include <acl/acl.h>  // -> TODO: ResourceManager

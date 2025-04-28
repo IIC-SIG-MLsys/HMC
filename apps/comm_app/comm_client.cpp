@@ -1,6 +1,7 @@
 #include <glog/logging.h>
-#include <hmc.h>
+#include <hddt.h>
 
+using namespace hddt;
 using namespace hmc;
 
 int main() {
