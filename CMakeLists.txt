@@ -34,6 +34,7 @@ if(ROCM_FOUND)
 elseif(CUDA_FOUND)
     # pass var to code
     add_definitions(-DENABLE_CUDA)
+    include_directories(${CUDA_INCLUDE_DIRS})
     enable_language(CUDA)
 elseif(NEUWARE_FOUND)
     # pass var to code
