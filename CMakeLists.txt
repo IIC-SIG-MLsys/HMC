@@ -55,6 +55,9 @@ include_directories(src) # 源文件下的其他头文件
 # with rdma
 include(FindRdma)
 
+# with ucx
+include(FindUcx)
+
 file(GLOB_RECURSE SRC_RECURSE "src/*.cpp")
 if(NOT SRC_RECURSE)
     message(FATAL_ERROR "No sources files found in the 'src' directory.")
@@ -89,6 +92,15 @@ target_include_directories(hmc_shared_lib PUBLIC src/resource_manager)
 target_include_directories(hmc_shared_lib PUBLIC src/network)
 target_include_directories(hmc_shared_lib PUBLIC src/utils)
 
+# Add UCX support
+if(UCX_FOUND)
+    target_include_directories(hmc_shared_lib PUBLIC ${UCX_INCLUDE_DIR})
+    target_link_libraries(hmc_shared_lib PUBLIC ${UCX_LIBRARIES})
+    add_definitions(-DENABLE_UCX)
+    message(STATUS "UCX support enabled")
+else()
+    message(WARNING "UCX not found. UCX support will be disabled.")
+endif()
 
 if(ROCM_FOUND)
   target_link_libraries(hmc_shared_lib PUBLIC ${HIP_LIBRARIES})
@@ -150,6 +162,7 @@ install(DIRECTORY include/ DESTINATION include)
 # add_subdirectory(apps/rdma_app)
 # add_subdirectory(apps/comm_app)
 # add_subdirectory(apps/python_app)
+add_subdirectory(apps/ucx_app)
 
 # # build test
 # enable_testing()
