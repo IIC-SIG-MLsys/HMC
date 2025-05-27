@@ -51,6 +51,15 @@ inline status_t gpuGetDevice(T *dev, int mlu_ordinal = 0) {
 #elif defined(ENABLE_HUAWEI)
   // TODO
   return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  int device; // 使用 Runtime API 获取当前设备，注意 T 应该为 int 类型
+  musaError_t err = musaGetDevice(&device);
+  if (err != musaSuccess) {
+    logError("musaGetDevice failed with error code %d\n", err);
+    return status_t::ERROR;
+  }
+  *dev = device;
+  return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
 #endif
@@ -93,6 +102,15 @@ template <typename T> inline status_t gpuCreateContext(T *ctx, int device_id) {
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  musaError_t err = musaSetDevice(device_id);
+  if (err != musaSuccess) {
+    logError("musaSetDevice (in gpuCreateContext) failed with error code %d\n",
+            err);
+    return status_t::ERROR;
+  }
+  *ctx = nullptr; // 无需显式创建上下文，返回空指针或自定义标识
+  return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
   return status_t::UNSUPPORT;
 #else
@@ -112,6 +130,9 @@ template <typename T> inline status_t gpuFreeContext(T ctx) {
     logError("cnCtxDestroy failed with error code %d", res);
     return status_t::ERROR;
   }
+  return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  // TODO
   return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
   // TODO

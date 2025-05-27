@@ -59,6 +59,9 @@ status_t GPUManager::init() {
 #elif defined(ENABLE_NEUWARE)
     gpuSetCtx(contexts[dev_id]);
     info.vendor = MemoryType::CAMBRICON_MLU;
+#elif ENABLE_MUSA
+    gpuSetDevice(dev_id);
+    info.vendor = MemoryType::MOORE_GPU;
 #endif
     if (gpuGetDeviceMemory(&info.freeMemory, &info.totalMemory) !=
         status_t::SUCCESS) {

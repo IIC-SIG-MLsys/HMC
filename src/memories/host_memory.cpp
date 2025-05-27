@@ -14,6 +14,10 @@ MemoryType memory_supported() {
   return MemoryType::AMD_GPU;
 #endif
 
+#ifdef ENABLE_MUSA
+  return MemoryType::MOORE_GPU;
+#endif
+
   return MemoryType::CPU;
 }
 

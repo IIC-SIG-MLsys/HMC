@@ -86,11 +86,11 @@ status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
   if (!addr || !mr) {
     return status_t::ERROR;
   }
-
   *mr = ibv_reg_mr(pd, addr, length,
                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
                        IBV_ACCESS_REMOTE_WRITE);
   if (!*mr) {
+    std::cout << pd << " " << addr << " " << length << std::endl;
     logError("Failed to register memory region");
     return status_t::ERROR;
   }

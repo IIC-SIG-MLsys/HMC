@@ -16,8 +16,8 @@ int main() {
   Communicator *comm = new Communicator(buffer);
   std::cout << "create communicator success " << std::endl;
 
-  comm->initServer("192.168.2.240", 2025, ConnType::RDMA);
-  comm->addNewRankAddr(1, "192.168.2.240", 2024);
+  comm->initServer("192.168.2.236", 2025, ConnType::RDMA);
+  comm->addNewRankAddr(1, "192.168.2.236", 2024);
   comm->addNewRankAddr(2, "192.168.2.251", 2025);
 
   int to_rank = 1;
