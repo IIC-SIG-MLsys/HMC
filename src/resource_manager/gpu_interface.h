@@ -7,8 +7,6 @@
 #include <hmc.h>
 #include <status.h>
 
-#include "../utils/log.h"
-
 namespace hmc {
 
 status_t gpuInit();

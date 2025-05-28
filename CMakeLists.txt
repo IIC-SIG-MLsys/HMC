@@ -28,6 +28,7 @@ if(ROCM_FOUND)
     add_definitions(-D__HIP_PLATFORM_AMD__)
 elseif(CUDA_FOUND)
     add_definitions(-DENABLE_CUDA)
+    include_directories(${CUDA_INCLUDE_DIRS})
     enable_language(CUDA)
 elseif(NEUWARE_FOUND)
     add_definitions(-DENABLE_NEUWARE)
@@ -86,6 +87,26 @@ endif()
 add_library(hmc_shared_lib SHARED ${SRC_RECURSE})
 target_include_directories(hmc_shared_lib PUBLIC include)
 
+<<<<<<< HEAD
+=======
+target_include_directories(hmc_shared_lib PUBLIC src/resource_manager)
+target_include_directories(hmc_shared_lib PUBLIC src/network)
+target_include_directories(hmc_shared_lib PUBLIC src/utils)
+
+
+if(ROCM_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${HIP_LIBRARIES})
+elseif(CUDA_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${CUDA_LIBRARIES})
+elseif(NEUWARE_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${NEUWARE_LIBRARIES})
+elseif(HUAWEI_FOUND)
+  target_link_libraries(hmc_shared_lib PUBLIC ${HUAWEI_LIBRARIES} ${ASCENDCL_LIBRARY})
+else()
+  message(FATAL_ERROR "ROCm or CUDA or NEUWARE or HUAWEI is required but was not found.")
+endif()
+
+>>>>>>> f68b43f450ec1c63114ba167fce204ffe1401c46
 if(RDMA_FOUND)
     target_include_directories(hmc_shared_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
     target_link_libraries(hmc_shared_lib PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
