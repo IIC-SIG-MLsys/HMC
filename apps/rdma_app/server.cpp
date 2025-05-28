@@ -1,142 +1,87 @@
 #include <chrono>
 #include <glog/logging.h>
-#include <hmc.h>
 #include <iostream>
+#include <thread>
 #include <cmath>
+#include <fstream>
+#include <unistd.h>
 #include <vector>
-#include <mutex>
-#include <future>
+#include <cmath>
+#include <iomanip>
+#include <hmc.h>
+
+const std::string server_ip = "192.168.2.240";
+const int base_port = 2026;
+const int device_id = 1;
+const size_t buffer_size = 2048ULL * 1024 * 16; // 32MB
 
 using namespace hmc;
+using namespace std;
 
-struct RecvContext {
-  int id;
-  Communicator* comm;
-  uint8_t* dest_ptr;
-  size_t size;
-  std::mutex* log_mutex;
-};
-
-void recv_channel_slice(RecvContext ctx) {
-  size_t flags;
-  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
-    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[Channel " << ctx.id << "] Receive failed.";
-    return;
-  }
-}
-
-int main() {
-  FLAGS_colorlogtostderr = true;
-  FLAGS_alsologtostderr = true;
-
-  const int channel_count = 1;
-  const std::string server_ip = "192.168.2.238";
-  const int base_port = 2025;
-
-  const int device_id = 1;
-  const size_t buffer_size = 2048ULL * 1024 * 16; // 32MB
-
-  std::vector<std::shared_ptr<ConnBuffer>> buffers;
-  std::vector<Communicator*> communicators;
-  std::mutex log_mutex;
-
-  for (int i = 0; i < channel_count; ++i) {
-    auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
-    Communicator* comm = new Communicator(buffer);
-    if (comm->initServer(server_ip, base_port + i, ConnType::RDMA) != status_t::SUCCESS) {
-      LOG(ERROR) << "Channel " << i << " server init failed.";
-      return -1;
-    }
-    comm->addNewRankAddr(0, server_ip, 0);
-    communicators.push_back(comm);
-    buffers.push_back(buffer);
-  }
-
-  for (int i = 0; i < channel_count; ++i) {
-    while (communicators[i]->checkConn(0, ConnType::RDMA) != status_t::SUCCESS) {
-      std::this_thread::sleep_for(std::chrono::microseconds(10));
-    }
-    LOG(INFO) << "Channel " << i << " connected.";
-  }
-
-  LOG(INFO) << "All channels connected. Ready to receive.";
-
-  for (int power = 25; power <= 30; ++power) {
-  const size_t total_size = std::pow(2, power);
-  size_t slice_size = total_size / channel_count;
-
-  const int repeat = 3;
-  double total_MBps = 0.0;
-
-  for (int r = 0; r < repeat; ++r) {
-    std::vector<uint8_t> full_data(total_size);
-    std::vector<std::future<void>> futures;
-
-    auto start_time = std::chrono::high_resolution_clock::now();
-
-    for (int i = 0; i < channel_count; ++i) {
-      uint8_t* slice_ptr = full_data.data() + i * slice_size;
-      size_t actual_size = (i == channel_count - 1)
-                              ? total_size - i * slice_size
-                              : slice_size;
-
-      RecvContext ctx = {
-          .id = i,
-          .comm = communicators[i],
-          .dest_ptr = slice_ptr,
-          .size = actual_size,
-          .log_mutex = &log_mutex
-      };
-
-      futures.emplace_back(std::async(std::launch::async, recv_channel_slice, ctx));
-    }
-
-    for (auto& f : futures) f.get();
-
-    auto end_time = std::chrono::high_resolution_clock::now();
-    std::chrono::duration<double> duration = end_time - start_time;
-    double seconds = duration.count();
-
-    double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
-    double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
-
-    total_MBps += throughput_MBps;
-
-    bool valid = true;
-    for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
-      if (full_data[i] != 'A') {
-        valid = false;
+bool DataVerfier(char* data, int data_size) {
+  bool data_valid1 = true;
+    for (size_t i = 0; i < std::min(static_cast<size_t>(100), (size_t)data_size); ++i) {
+      if (data[i] != 'A') {
+        data_valid1 = false;
         break;
       }
     }
+  return data_valid1;
+}
 
-    LOG(INFO) << "[Trial " << r + 1 << "] "
-              << total_size / (1024 * 1024) << " MB received in "
-              << seconds << " s, "
-              << throughput_MBps << " MB/s ("
-              << throughput_Gbps << " Gbps), "
-              << "Data Integrity: " << (valid ? "PASS" : "FAIL");
+int receive() { 
+  auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
+  Communicator* comm = new Communicator(buffer);
+  if (comm->initServer(server_ip, 12026, ConnType::RDMA) != status_t::SUCCESS) {
+    return -1;
+  }
+  comm->addNewRankAddr(0, server_ip, 12026);
+  comm->addNewRankAddr(1, server_ip, 2026);
+  while(comm->checkConn(0, ConnType::RDMA) != status_t::SUCCESS) {
 
-      std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+  Memory* mem = new Memory(0);
+  for (int power = 4; power <= 30; ++power) {
+    const size_t data_size = std::pow(2, power);
+    std::cout<<"`12312321";
+  /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
+    // UHM interface
+    size_t* UHMflag;
+    void *UHMreceive;
+    mem->allocateBuffer(&UHMreceive, data_size);
+    comm->recvDataFrom(0, UHMreceive, data_size, MemoryType::AMD_GPU, UHMflag);
+    std::cout << "UHM 数据完整性检查: " << (DataVerfier((char*) UHMreceive,  data_size) ? "通过" : "失败") << std::endl;
+
+  /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
+    // Serial interface
+    void *Serialreceive;
+    size_t* Serialflag;
+    mem->allocateBuffer(&Serialreceive, buffer_size);
+    
+    size_t buffer_size = buffer_size / 2;
+    size_t num_send_chunks =
+      (data_size + buffer_size - 1) / buffer_size;
+
+    for(int i = 0; i < num_send_chunks; i++){
+      comm->recvDataFrom(0, Serialreceive, std::min(buffer_size, data_size - i * buffer_size), MemoryType::AMD_GPU, Serialflag);
     }
+    std::cout << "Serial 数据完整性检查: " << (DataVerfier((char*) Serialreceive,  data_size) ? "通过" : "失败") << std::endl;
+  /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
+    // G2H2G interface
+    void *G2H2Greceive;
+    size_t* G2H2Gflag;
+    mem->allocateBuffer(&G2H2Greceive, data_size);
+    comm->recvDataFrom(0, UHMreceive, data_size, MemoryType::AMD_GPU, G2H2Gflag);
+    std::cout << "G2H2G 数据完整性检查: " << (DataVerfier((char*) G2H2Greceive,  data_size) ? "通过" : "失败") << std::endl;
 
-    double avg_MBps = total_MBps / repeat;
-    double avg_Gbps = avg_MBps * 1024.0 * 1024.0 * 8 / 1e9;
-
-    LOG(INFO) << ">>> Average over " << repeat << " trials: "
-              << avg_MBps << " MB/s ("
-              << avg_Gbps << " Gbps)";
-    LOG(INFO) << "--------------------------------------------";
-
-    std::this_thread::sleep_for(std::chrono::seconds(1));
+    mem->freeBuffer(UHMreceive);
+    mem->freeBuffer(G2H2Greceive);
+    mem->freeBuffer(Serialreceive);
   }
+  return 0;
+}
 
-  for (int i = 0; i < channel_count; ++i) {
-    communicators[i]->closeServer();
-    delete communicators[i];
-  }
-
-  std::cout << "Server shutdown complete." << std::endl;
+int main() {
+  receive();
   return 0;
 }
