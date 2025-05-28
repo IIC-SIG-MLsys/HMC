@@ -131,6 +131,32 @@ private:
   // bool is_initialized_ = false;
 };
 
+
+class MusaMemory : public MemoryBase {
+  public:
+    MusaMemory(int device_id, MemoryType mem_type)
+        : MemoryBase(device_id, mem_type) {
+      status_t sret;
+      sret = this->init();
+      if (sret != status_t::SUCCESS) {
+        logError("MusaMemory init mem_ops err %s.", status_to_string(sret));
+        exit(1);
+      }
+    };
+    ~MusaMemory() { this->free(); };
+  
+    status_t init();
+    status_t free();
+    status_t allocateBuffer(void **addr, size_t size);
+    status_t allocatePeerableBuffer(void **addr, size_t size);
+    status_t freeBuffer(void *addr);
+  
+    status_t copyHostToDevice(void *dest, const void *src, size_t size);
+    status_t copyDeviceToHost(void *dest, const void *src, size_t size);
+    status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
+  };
+  
+
 } // namespace hmc
 
 #endif

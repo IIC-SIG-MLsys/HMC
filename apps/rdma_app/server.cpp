@@ -31,7 +31,7 @@ int main() {
   FLAGS_alsologtostderr = true;
 
   const int channel_count = 1;
-  const std::string server_ip = "192.168.2.241";
+  const std::string server_ip = "192.168.2.238";
   const int base_port = 2025;
 
   const int device_id = 1;

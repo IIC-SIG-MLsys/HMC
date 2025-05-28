@@ -6,6 +6,9 @@ using namespace hmc;
 int main() {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
+  #if ENABLE_MUSA
+  std::cout << "Using Cambricon MLU memory." << std::endl;
+#endif
 
   int device_id = 0;
   size_t buffer_size = 1 * 1024 * 1024;
@@ -16,8 +19,8 @@ int main() {
   Communicator *comm = new Communicator(buffer);
   std::cout << "create communicator success " << std::endl;
 
-  comm->initServer("192.168.2.240", 2025, ConnType::RDMA);
-  comm->addNewRankAddr(1, "192.168.2.240", 2024);
+  comm->initServer("192.168.2.236", 2025, ConnType::RDMA);
+  comm->addNewRankAddr(1, "192.168.2.236", 2024);
   comm->addNewRankAddr(2, "192.168.2.251", 2025);
 
   int to_rank = 1;
