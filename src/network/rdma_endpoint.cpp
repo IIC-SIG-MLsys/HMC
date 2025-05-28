@@ -285,7 +285,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
       size_t next_size = std::min(half_buffer_size, next_remaining);
 
       size_t bias = next_chunk_index * half_buffer_size;
-      void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) * half_buffer_size;
+      // void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) * half_buffer_size;
       mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, next_size, bias) : buffer->writeFromGpu(input_buffer, next_size, bias);
     }
 

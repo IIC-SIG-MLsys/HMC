@@ -24,9 +24,28 @@ status_t gpuInit() {
   }
   return status_t::SUCCESS;
 #elif defined(ENABLE_NEUWARE)
-  CNresult res = cnInit(0);
+  int device_count = 0;
+  CNresult res;
+  CNdev cndev;
+  CNcontext cnctx; // may be leak
+  res = cnInit(0);
   if (res != CN_SUCCESS) {
     logError("cnInit failed with error code %d", res);
+    return status_t::ERROR;
+  }
+  res = cnDeviceGetCount(&device_count);
+  if (device_count <= 0){
+    logError("cnDeviceGetCount failed with error code %d", CN_ERROR_NO_DEVICE);
+    return status_t::ERROR;
+  }
+  res = cnDeviceGet(&cndev, 0);
+  if (res != CN_SUCCESS) {
+    logError("cnDeviceGet 0 failed with error code %d", res);
+    return status_t::ERROR;
+  }
+  res = cnCtxCreate(&cnctx, 0, cndev);
+  if (res != CN_SUCCESS) {
+    logError("cnCtxCreate failed with error code %d", res);
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
