@@ -7,6 +7,7 @@
  #include <musa_runtime.h>  // 必须包含 MUSA 运行时头文件
  namespace hmc {
  #ifdef ENABLE_MUSA
+  #include <musa_runtime.h>  // 必须包含 MUSA 运行时头文件
  /*
   * moore gpu memory
   */
