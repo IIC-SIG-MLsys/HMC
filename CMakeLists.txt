@@ -137,8 +137,9 @@ endif()
 install(DIRECTORY include/ DESTINATION include)
 
 # ===== APPS =====
-add_subdirectory(apps/rdma_app)
-add_subdirectory(apps/comm_app)
+# add_subdirectory(apps/rdma_app)
+add_subdirectory(apps/uhm_app)
+# add_subdirectory(apps/comm_app)
 # add_subdirectory(apps/python_app)
 
 # ===== TESTS =====

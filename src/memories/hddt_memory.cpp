@@ -10,7 +10,7 @@ status_t Memory::init() { return this->memoryClass->init(); }
 
 status_t Memory::free() { return this->memoryClass->free(); }
 
-// create memory class according to memory type
+// create memory class according to device type
 std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
   switch (mem_type) {
   case MemoryType::CPU:

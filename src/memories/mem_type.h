@@ -85,10 +85,15 @@ public:
 class NeuwareMemory : public MemoryBase {
 public:
   CNaddr mlu_addr;
+#ifdef ENABLE_NEUWARE
+  CNdev mlu_dev;
+  CNcontext mlu_ctx;
+  int device_id;
+#endif
 
 public:
   NeuwareMemory(int device_id, MemoryType mem_type)
-      : MemoryBase(device_id, mem_type) {
+      : MemoryBase(device_id, mem_type), device_id(device_id) {
     status_t sret;
     sret = this->init();
     if (sret != status_t::SUCCESS) {
@@ -96,7 +101,9 @@ public:
       exit(1);
     }
   };
-  ~NeuwareMemory() { this->free(); };
+  ~NeuwareMemory() { 
+    this->free();
+  };
 
   status_t init();
   status_t free();

@@ -11,9 +11,28 @@ namespace hmc {
 /*
  * nvidia gpu memory
  */
-status_t NeuwareMemory::init() { return gpuInit(); }
+status_t NeuwareMemory::init() { 
+  status_t sret = gpuInit();
+  if (sret != status_t::SUCCESS) {
+    logError("NeuwareMemory init Neuware err %s.", status_to_string(sret));
+    return sret;
+  }
+  sret = gpuGetDevice(&mlu_dev, device_id);
+  if (sret != status_t::SUCCESS) {
+    logError("NeuwareMemory get device %d err %s.", device_id, status_to_string(sret));
+    return sret;
+  }
+  sret = gpuCreateContext(&mlu_ctx, mlu_dev);
+  if (sret != status_t::SUCCESS) {
+    logError("NeuwareMemory creating context err %s.", status_to_string(sret));
+    return sret;
+  }
+  return sret;
+}
 
-status_t NeuwareMemory::free() { return status_t::SUCCESS; }
+status_t NeuwareMemory::free() { 
+  return gpuFreeContext(mlu_ctx);
+}
 
 status_t NeuwareMemory::allocateBuffer(void **addr, size_t size) {
   CNresult ret;
@@ -65,6 +84,7 @@ status_t NeuwareMemory::freeBuffer(void *addr) {
 status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
                                          size_t size) {
   CNresult ret;
+  if (this->init() != status_t::SUCCESS) return status_t::ERROR;
 
   if (dest == nullptr || src == nullptr) {
     logError("NeuwareMemory::copyHostToDevice Error.");
@@ -75,7 +95,7 @@ status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
   CNaddr src_mlu = (CNaddr)src;
   ret = cnMemcpy(dest_mlu, src_mlu, size);
   if (ret != CN_SUCCESS) {
-    logError("failed to copy memory from host to memory");
+    logError("failed to copy memory from host to device, err code: %d", ret);
     return status_t::ERROR;
   }
 
@@ -85,6 +105,7 @@ status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
 status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
                                          size_t size) {
   CNresult ret;
+  if (this->init() != status_t::SUCCESS) return status_t::ERROR;
 
   if (dest == nullptr || src == nullptr) {
     logError("NeuwareMemory::copyDeviceToHost Error.");
@@ -105,6 +126,7 @@ status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
 status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
                                            size_t size) {
   CNresult ret;
+  if (this->init() != status_t::SUCCESS) return status_t::ERROR;
 
   if (dest == nullptr || src == nullptr) {
     logError("NeuwareMemory::copyDeviceToDevice Error.");
