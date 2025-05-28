@@ -4,7 +4,6 @@
  #include "../resource_manager/gpu_interface.h"
  #include "./mem_type.h"
  #include <mem.h>
- #include <musa_runtime.h>  // 必须包含 MUSA 运行时头文件
  namespace hmc {
  #ifdef ENABLE_MUSA
  /*
