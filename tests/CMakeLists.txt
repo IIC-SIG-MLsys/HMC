@@ -49,10 +49,3 @@ target_include_directories(${BINARY}
     ${GLOG_INCLUDE_DIRS}
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>  # 仅在 MUSA 启用时添加
 )
-
-# 设置 MPI 编译器（非 ROCm 情况下）
-if(NOT ROCM_FOUND)
-    find_program(MPICC mpicxx REQUIRED)
-    set(CMAKE_C_COMPILER   ${MPICC})
-    set(CMAKE_CXX_COMPILER ${MPICC})
-endif()
