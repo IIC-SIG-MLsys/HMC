@@ -103,7 +103,7 @@ int main(int argc, char* argv[]) {
   const int base_port = 2025;
 
   const int device_id = 0;
-  const size_t buffer_size = 2048ULL * 1024 * 16; // 寒武纪最大：2048ULL * 1024 * 16
+  const size_t buffer_size = 2048ULL * 1024 * 16; // 寒武纪最大：2048ULL * 1024 * 16; // 1024ULL * 256 -> 2^8
 
   std::vector<std::shared_ptr<ConnBuffer>> buffers;
   std::vector<Communicator*> communicators;
@@ -143,12 +143,12 @@ int main(int argc, char* argv[]) {
   }
   csv_file.close();
 
-  for (int power = 20; power <= 24; ++power) {
+  for (int power = 20; power <= 28; ++power) {
   const size_t total_size = std::pow(2, power);
   std::vector<uint8_t> host_data(total_size, 'A');
   size_t slice_size = total_size / channel_count;
 
-  const int repeat = 3;
+  const int repeat = 1;
   double total_MBps = 0.0;
 
   for (int r = 0; r < repeat; ++r) {
