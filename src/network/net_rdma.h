@@ -19,8 +19,8 @@ typedef enum {
 } UHMBufferStateType;
 
 struct __attribute__((packed)) UHMBufferState {
-  UHM_STATE_TYPE state[2]; // 0: 第一个buffer，1: 第二个buffer
-  UHM_STATE_TYPE length;   // 第三位是length标识传输长度
+  volatile UHM_STATE_TYPE state[2]; // 0: 第一个buffer，1: 第二个buffer // volatile内存屏障，保障总能拿到最新的值而不是缓存
+  volatile UHM_STATE_TYPE length;   // 第三位是length标识传输长度
 };
 
 struct __attribute((packed)) rdma_buffer_attr {

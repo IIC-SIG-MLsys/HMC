@@ -1,2 +1,1 @@
-cd build/apps/comm_app
-./comm_client
+./build/apps/uhm_app/uhm_client --mode=uhm

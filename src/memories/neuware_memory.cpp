@@ -99,6 +99,7 @@ status_t NeuwareMemory::copyHostToDevice(void *dest, const void *src,
     return status_t::ERROR;
   }
 
+  this->free();
   return status_t::SUCCESS;
 }
 
@@ -120,13 +121,14 @@ status_t NeuwareMemory::copyDeviceToHost(void *dest, const void *src,
     return status_t::ERROR;
   }
 
+  this->free();
   return status_t::SUCCESS;
 }
 
 status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
                                            size_t size) {
   CNresult ret;
-  if (this->init() != status_t::SUCCESS) return status_t::ERROR;
+  if (this->init() != status_t::SUCCESS) return status_t::ERROR; // 寒武纪的新库太sb了，每次使用必须对ctx新建和用完立即销毁
 
   if (dest == nullptr || src == nullptr) {
     logError("NeuwareMemory::copyDeviceToDevice Error.");
@@ -141,6 +143,7 @@ status_t NeuwareMemory::copyDeviceToDevice(void *dest, const void *src,
     return status_t::ERROR;
   }
 
+  this->free(); // 寒武纪的新库太sb了，每次使用必须对ctx新建和用完立即销毁
   return status_t::SUCCESS;
 }
 
