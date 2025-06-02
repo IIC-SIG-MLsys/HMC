@@ -93,7 +93,7 @@ public:
 
 public:
   NeuwareMemory(int device_id, MemoryType mem_type)
-      : MemoryBase(device_id, mem_type), device_id(device_id) {
+      : MemoryBase(device_id, mem_type) {
     status_t sret;
     sret = this->init();
     if (sret != status_t::SUCCESS) {
