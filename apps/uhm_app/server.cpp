@@ -10,7 +10,7 @@
 
 using namespace hmc;
 using namespace std;
-
+const size_t buffer_size = 2048ULL * 32; // 寒武纪最大：2048ULL * 1024 * 16  // 1024ULL * 256 -> 2^8
 struct RecvContext {
   int id;
   Communicator* comm;
@@ -18,11 +18,11 @@ struct RecvContext {
   size_t size;
   std::mutex* log_mutex;
 };
-
+Memory *mem_op  = new Memory(0);
 // UHM
 void recv_channel_slice_uhm(RecvContext ctx) {
   size_t flags;
-  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
+  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::MOORE_GPU, &flags) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[Channel " << ctx.id << "] Receive failed.";
     return;
@@ -31,43 +31,43 @@ void recv_channel_slice_uhm(RecvContext ctx) {
 
 // Serial: 分段接收（每个 chunk 最大 half_buffer_size）
 void recv_channel_slice_serial(RecvContext ctx) {
-  // const size_t half_buffer_size = buffer_size / 2; // 来自全局变量或 main 中定义
-  // size_t remaining = ctx.size;
-  // uint8_t* ptr = ctx.dest_ptr;
+  const size_t half_buffer_size = buffer_size / 2; // 来自全局变量或 main 中定义
+  size_t remaining = ctx.size;
+  uint8_t* ptr = ctx.dest_ptr;
 
-  // while (remaining > 0) {
-  //   size_t chunk_size = std::min(half_buffer_size, remaining);
-  //   size_t flags;
+  while (remaining > 0) {
+    size_t chunk_size = std::min(half_buffer_size, remaining);
+    size_t flags;
 
-  //   if (ctx.comm->recvDataFrom(0, ptr, chunk_size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
-  //     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //     LOG(ERROR) << "[Channel " << ctx.id << "] Serial Receive failed.";
-  //     return;
-  //   }
+    if (ctx.comm->recvDataFrom(0, ptr, chunk_size, MemoryType::MOORE_GPU, &flags) != status_t::SUCCESS) {
+      std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+      LOG(ERROR) << "[Channel " << ctx.id << "] Serial Receive failed.";
+      return;
+    }
 
-  //   remaining -= chunk_size;
-  //   ptr += chunk_size;
-  // }
+    remaining -= chunk_size;
+    ptr += chunk_size;
+  }
 }
 
 // G2H2G: 使用 GPU 内存接收
 void recv_channel_slice_g2h2g(RecvContext ctx) {
-  // size_t flags;
-  // if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::AMD_GPU, &flags) != status_t::SUCCESS) {
-  //   std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //   LOG(ERROR) << "[Channel " << ctx.id << "] G2H2G Receive failed.";
-  //   return;
-  // }
+  size_t flags;
+  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[Channel " << ctx.id << "] Receive failed.";
+    return;
+  }
 }
 
 // RDMA over CPU memory
 void recv_channel_slice_rdma_cpu(RecvContext ctx) {
-  // size_t flags;
-  // if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
-  //   std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //   LOG(ERROR) << "[Channel " << ctx.id << "] RDMA (CPU) Receive failed.";
-  //   return;
-  // }
+  size_t flags;
+  if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[Channel " << ctx.id << "] RDMA (CPU) Receive failed.";
+    return;
+  }
 }
 
 std::string get_mode_from_args(int argc, char* argv[]) {
@@ -96,11 +96,11 @@ int main(int argc, char* argv[]) {
   LOG(INFO) << "Running in mode: " << mode;
 
   const int channel_count = 1;
-  const std::string server_ip = "192.168.2.248";
+  const std::string server_ip = "192.168.2.238";
   const int base_port = 2025;
 
   const int device_id = 0;
-  const size_t buffer_size = 2048ULL * 1024 * 16; // 寒武纪最大：2048ULL * 1024 * 16  // 1024ULL * 256 -> 2^8
+  
 
   std::vector<std::shared_ptr<ConnBuffer>> buffers;
   std::vector<Communicator*> communicators;
@@ -143,7 +143,7 @@ int main(int argc, char* argv[]) {
 
   LOG(INFO) << "All channels connected. Ready to receive.";
 
-  for (int power = 20; power <= 28; ++power) {
+  for (int power = 3; power <= 28; ++power) {
     const size_t total_size = std::pow(2, power);
     size_t slice_size = total_size / channel_count;
 
@@ -155,9 +155,11 @@ int main(int argc, char* argv[]) {
       std::vector<std::future<void>> futures;
 
       auto start_time = std::chrono::high_resolution_clock::now();
-
+      void* slice_ptr;
       for (int i = 0; i < channel_count; ++i) {
-        uint8_t* slice_ptr = full_data.data() + i * slice_size;
+        
+        mem_op->allocateBuffer(&slice_ptr, total_size);
+         
         size_t actual_size = (i == channel_count - 1)
                                 ? total_size - i * slice_size
                                 : slice_size;
@@ -165,7 +167,7 @@ int main(int argc, char* argv[]) {
         RecvContext ctx = {
             .id = i,
             .comm = communicators[i],
-            .dest_ptr = slice_ptr,
+            .dest_ptr = (uint8_t*)slice_ptr,
             .size = actual_size,
             .log_mutex = &log_mutex
         };
@@ -183,7 +185,7 @@ int main(int argc, char* argv[]) {
       double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
 
       total_MBps += throughput_MBps;
-
+      mem_op->copyDeviceToHost(full_data.data(), slice_ptr, total_size);
       bool valid = true;
       for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
         if (full_data[i] != 'A') {
