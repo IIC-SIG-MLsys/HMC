@@ -95,6 +95,7 @@ public:
   NeuwareMemory(int device_id, MemoryType mem_type)
       : MemoryBase(device_id, mem_type) {
     status_t sret;
+    this->device_id = device_id;
     sret = this->init();
     if (sret != status_t::SUCCESS) {
       logError("NeuwareMemory init mem_ops err %s.", status_to_string(sret));
