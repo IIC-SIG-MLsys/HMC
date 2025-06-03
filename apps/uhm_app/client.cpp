@@ -7,6 +7,12 @@
 #include <fstream>
 #include <string>
 #include <mutex>
+#include <thread>
+#include <cstring>
+#include <sys/socket.h>
+#include <arpa/inet.h>
+#include <unistd.h>
+
 #include "../src/memories/mem_type.h"
 #include "../src/resource_manager/gpu_interface.h"
 
@@ -20,6 +26,10 @@ size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
 const int gpu_port = 2025;
 const int cpu_port = 2026;
+const int ctrl_port = 2027;
+
+int ctrl_sock = -1; // TCP 控制sock
+
 Communicator *gpu_comm;
 Communicator *cpu_comm;
 std::shared_ptr<ConnBuffer> gpu_buffer;
@@ -36,6 +46,57 @@ struct Context {
 
 long long total_time = 0;
 std::mutex log_mutex;
+
+// ===== TCP 控制信号发送函数 =====
+bool connect_control_server(const std::string& server_ip, int ctrl_port = 9099) {
+  ctrl_sock = socket(AF_INET, SOCK_STREAM, 0);
+  if (ctrl_sock < 0) {
+      perror("Socket creation error");
+      return false;
+  }
+
+  sockaddr_in serv_addr{};
+  serv_addr.sin_family = AF_INET;
+  serv_addr.sin_port = htons(ctrl_port);
+
+  if (inet_pton(AF_INET, server_ip.c_str(), &serv_addr.sin_addr) <= 0) {
+      perror("Invalid address / Address not supported");
+      close(ctrl_sock);
+      ctrl_sock = -1;
+      return false;
+  }
+
+  if (connect(ctrl_sock, (struct sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
+      perror("Connection to control server failed");
+      close(ctrl_sock);
+      ctrl_sock = -1;
+      return false;
+  }
+
+  std::cout << "Connected to control server." << std::endl;
+  return true;
+}
+
+bool send_control_message(const std::string& msg) {
+  if (ctrl_sock < 0) {
+      std::cerr << "Control socket not connected." << std::endl;
+      return false;
+  }
+  ssize_t sent = send(ctrl_sock, msg.c_str(), msg.size(), 0);
+  if (sent < 0) {
+      perror("Send failed");
+      return false;
+  }
+  return true;
+}
+
+void close_control_connection() {
+  if (ctrl_sock >= 0) {
+      close(ctrl_sock);
+      ctrl_sock = -1;
+      std::cout << "Control connection closed." << std::endl;
+  }
+}
 
 void send_channel_slice_serial(Context ctx) {
   // total_time = 0;
@@ -73,6 +134,10 @@ void send_channel_slice_uhm(Context ctx) {
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UHM] Send failed.";
+  }
+
+  if (!send_control_message("START")) {
+    std::cerr << "Send control message failed" << std::endl;
   }
 }
 
@@ -138,8 +203,14 @@ int main(int argc, char* argv[]) {
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
   gpu_comm = new Communicator(gpu_buffer);
   cpu_comm = new Communicator(cpu_buffer);
+
   gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
   cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);
+
+  if (!connect_control_server(server_ip, ctrl_port)) {
+    std::cerr << "Failed to connect control server" << std::endl;
+    return -1;
+  }
 
   void (*send_func)(Context) = nullptr;
   if (mode == "serial") send_func = send_channel_slice_serial;
@@ -161,7 +232,7 @@ int main(int argc, char* argv[]) {
     gpu_mem_op->allocateBuffer(&device_ptr, total_size);
     gpu_mem_op->copyHostToDevice(device_ptr, host_data.data(), total_size);
 
-    Context ctx = {.cpu_data_ptr=host_data.data(), .gpu_data_ptr = device_ptr, .size = total_size, .log_mutex = &log_mutex};
+    Context ctx = {.cpu_data_ptr = host_data.data(), .gpu_data_ptr = device_ptr, .size = total_size, .log_mutex = &log_mutex};
     
     send_func(ctx);
 
@@ -185,6 +256,7 @@ int main(int argc, char* argv[]) {
 
   gpu_comm->disConnect(server_ip, ConnType::RDMA);
   cpu_comm->disConnect(server_ip, ConnType::RDMA);
+  close_control_connection();
   delete gpu_comm;
   delete cpu_comm;
 

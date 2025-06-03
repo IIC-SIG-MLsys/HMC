@@ -6,6 +6,10 @@
 #include <vector>
 #include <mutex>
 #include <string>
+#include <thread>
+#include <sys/socket.h>
+#include <netinet/in.h>
+#include <unistd.h>
 
 using namespace hmc;
 using namespace std;
@@ -16,6 +20,9 @@ const std::string server_ip = "192.168.2.248";
 const std::string client_ip = "192.168.2.248";
 const int gpu_port = 2025;
 const int cpu_port = 2026;
+const int ctrl_port = 2027;  // TCP 控制端口
+
+int ctrl_socket_fd; // TCP 控制fd
 
 std::shared_ptr<ConnBuffer> gpu_buffer;
 std::shared_ptr<ConnBuffer> cpu_buffer;
@@ -31,6 +38,61 @@ struct Context {
   std::mutex* log_mutex;
 };
 
+// 控制函数（TCP 消息机制）
+int setup_tcp_control_socket(int port) {
+  int server_fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (server_fd == -1) {
+    perror("socket failed");
+    exit(EXIT_FAILURE);
+  }
+
+  int opt = 1;
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+
+  sockaddr_in address;
+  address.sin_family = AF_INET;
+  address.sin_addr.s_addr = INADDR_ANY;
+  address.sin_port = htons(port);
+
+  if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
+    perror("bind failed");
+    exit(EXIT_FAILURE);
+  }
+
+  if (listen(server_fd, 1) < 0) {
+    perror("listen failed");
+    exit(EXIT_FAILURE);
+  }
+
+  LOG(INFO) << "Waiting for TCP control connection on port " << port;
+  int addrlen = sizeof(address);
+  int new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
+  if (new_socket < 0) {
+    perror("accept failed");
+    exit(EXIT_FAILURE);
+  }
+  LOG(INFO) << "TCP control connection established.";
+  return new_socket;
+}
+
+void close_control_socket(int& sock) {
+  if (sock >= 0) {
+      close(sock);
+      sock = -1;
+      LOG(INFO) << "Control socket closed.";
+  }
+}
+
+void wait_for_control_message(int socket_fd) {
+  char buffer[16] = {0};
+  int valread = read(socket_fd, buffer, sizeof(buffer));
+  if (valread <= 0 || std::string(buffer).find("START") == std::string::npos) {
+    LOG(ERROR) << "Unexpected or no control message received.";
+    exit(EXIT_FAILURE);
+  }
+  LOG(INFO) << "Received control signal: " << buffer;
+}
+
 // 接收函数：UHM
 void recv_channel_slice_uhm(Context ctx) {
   size_t flags;
@@ -38,6 +100,7 @@ void recv_channel_slice_uhm(Context ctx) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "UHM Receive failed.";
   }
+  wait_for_control_message(ctrl_socket_fd);
 }
 
 // 接收函数：Serial（分段）
@@ -125,8 +188,12 @@ int main(int argc, char* argv[]) {
   while (cpu_comm->checkConn(client_ip, ConnType::RDMA) != status_t::SUCCESS) {
     std::this_thread::sleep_for(std::chrono::microseconds(10));
   }
-  LOG(INFO) << "Connection established. Ready to receive.";
+  LOG(INFO) << "RDMA Connection established. Ready to receive.";
 
+  // 启动 TCP 控制连接
+  ctrl_socket_fd = setup_tcp_control_socket(ctrl_port);
+
+  // 选择接收函数
   void (*recv_func)(Context) = nullptr;
   if (mode == "serial") recv_func = recv_channel_slice_serial;
   else if (mode == "g2h2g") recv_func = recv_channel_slice_g2h2g;
@@ -179,6 +246,7 @@ int main(int argc, char* argv[]) {
 
   gpu_comm->closeServer();
   cpu_comm->closeServer();
+  close_control_socket(ctrl_socket_fd);
   delete gpu_comm;
   delete cpu_comm;
 
