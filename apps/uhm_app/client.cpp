@@ -24,8 +24,8 @@ struct ChannelContext {
 
 std::chrono::duration<double> duration1;
 long long total_time = 0;
-// size_t buffer_size = 2048ULL * 32; // 寒武纪最大：2048ULL * 1024 * 16; // 1024ULL * 256 -> 2^8
-size_t buffer_size = 2048ULL * 1024 * 16;
+size_t buffer_size = 2048ULL * 32; // 寒武纪最大：2048ULL * 1024 * 16; // 1024ULL * 256 -> 2^8
+// size_t buffer_size = 2048ULL * 1024 * 16 * 2;
 Memory* mem_op  = new Memory(0);
 std::vector<std::shared_ptr<ConnBuffer>> buffers;
 
@@ -75,14 +75,15 @@ void send_channel_slice_serial(ChannelContext ctx) {
 // G2H2G 模式：先拷贝到 Host，再发送 CPU 内存
 void send_channel_slice_g2h2g(ChannelContext ctx) {
   Memory* mem = new Memory(0, MemoryType::CPU);
-  void* host_buffer = nullptr;
+  void* host_buffer;
   mem->allocateBuffer(&host_buffer, ctx.size);
 
   auto start_time = std::chrono::high_resolution_clock::now();
-  mem->copyDeviceToHost(host_buffer, ctx.data_ptr, ctx.size);
+  mem_op->copyDeviceToHost(host_buffer, ctx.data_ptr, ctx.size);
+  // logDebug("1");
   auto status = ctx.comm->sendDataTo(0, host_buffer, ctx.size, MemoryType::CPU);
   auto end_time = std::chrono::high_resolution_clock::now();
-
+  // logDebug("2");
   total_time = duration_cast<microseconds>(end_time - start_time).count();
 
   if (status != status_t::SUCCESS) {
@@ -95,15 +96,25 @@ void send_channel_slice_g2h2g(ChannelContext ctx) {
 
 // RDMA over CPU 内存
 void send_channel_slice_rdma_cpu(ChannelContext ctx) {
+  total_time = 0;
+  const size_t chunk_size = buffer_size / 2; // 2MB chunks
+  size_t remaining = ctx.size;
+  size_t num_send_chunks =
+      (ctx.size + chunk_size - 1) / chunk_size;
+  std::vector<uint8_t> host_data1(ctx.size, 'A');
   auto start_time = std::chrono::high_resolution_clock::now();
-  auto status = ctx.comm->writeTo(0, 0, ctx.size, hmc::ConnType::RDMA);
-  auto end_time = std::chrono::high_resolution_clock::now();
-  total_time = duration_cast<microseconds>(end_time - start_time).count();
-  if (status != status_t::SUCCESS) {
-    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[Channel " << ctx.id << "] Send failed.";
-  }
+  for(size_t i = 0; i < num_send_chunks; i++){
+    size_t send_size = min(chunk_size, remaining);
+    buffers[0]->writeFromCpu(host_data1.data(), send_size, 0 );  
 
+    
+    ctx.comm->writeTo(0, 0, send_size, hmc::ConnType::RDMA);
+    
+    remaining -= send_size;
+    
+  }
+  auto end_time = std::chrono::high_resolution_clock::now();
+  total_time += duration_cast<microseconds>(end_time - start_time).count();
 }
 
 std::string get_mode_from_args(int argc, char* argv[]) {
@@ -180,11 +191,9 @@ int main(int argc, char* argv[]) {
   }
   csv_file.close();
 
-  for (int power = 3; power <= 28; ++power) {
+  for (int power = 3; power <= 26; ++power) {
   const size_t total_size = std::pow(2, power);
   std::vector<uint8_t> host_data(total_size, 'A');
-
-  buffers[0]->writeFromCpu(host_data.data(), total_size, 0);  
 
   size_t slice_size = total_size / channel_count;
 
@@ -200,15 +209,15 @@ int main(int argc, char* argv[]) {
       void* slice_ptr;
       mem_op->allocateBuffer(&slice_ptr, total_size);
       mem_op->copyHostToDevice(slice_ptr, host_data.data() + i * slice_size, total_size);
-      size_t actual_size = (i == channel_count - 1)
-                              ? total_size - i * slice_size
-                              : slice_size;
+      // size_t actual_size = (i == channel_count - 1)
+                              // ? total_size - i * slice_size
+                              // : slice_size;
                               
       ChannelContext ctx = {
           .id = i,
           .comm = communicators[i],
           .data_ptr = slice_ptr,
-          .size = actual_size};
+          .size = total_size};
       
       futures.emplace_back(std::async(std::launch::async, send_func, ctx));
       // gpuFreeContext(mem_op->mlu_ctx);
