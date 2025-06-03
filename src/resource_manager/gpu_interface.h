@@ -49,6 +49,15 @@ inline status_t gpuGetDevice(T *dev, int mlu_ordinal = 0) {
 #elif defined(ENABLE_HUAWEI)
   // TODO
   return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  int device; // 使用 Runtime API 获取当前设备，注意 T 应该为 int 类型
+  musaError_t err = musaGetDevice(&device);
+  if (err != musaSuccess) {
+    logError("musaGetDevice failed with error code %d\n", err);
+    return status_t::ERROR;
+  }
+  *dev = device;
+  return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
 #endif
@@ -71,31 +80,17 @@ inline status_t gpuSetCtx(T &ctx) {
 #endif
 };
 
-template <typename T> inline status_t gpuCreateContext(T *ctx, int device_id) {
-#ifdef ENABLE_CUDA
-  // CUDA Runtime 中上下文是自动创建的，调用 cudaSetDevice 即可
-  cudaError_t err = cudaSetDevice(device_id);
-  if (err != cudaSuccess) {
-    logError("cudaSetDevice (in gpuCreateContext) failed with error code %d\n",
-             err);
-    return status_t::ERROR;
-  }
-  *ctx = nullptr; // 无需显式创建上下文，返回空指针或自定义标识
-  return status_t::SUCCESS;
-#elif defined(ENABLE_ROCM)
-  return status_t::UNSUPPORT;
-#elif defined(ENABLE_NEUWARE)
-  CNresult res = cnCtxCreate(ctx, 0, device_id);
+// only for neuware: CNContext. CNDev
+template <typename T, typename D> inline status_t gpuCreateContext(T *ctx, D dev) {
+#ifdef ENABLE_NEUWARE
+  CNresult res = cnCtxCreate(ctx, 0, dev);
   if (res != CN_SUCCESS) {
     logError("cnCtxCreate failed with error code %d", res);
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  return status_t::UNSUPPORT;
-#else
-  return status_t::UNSUPPORT;
 #endif
+  return status_t::UNSUPPORT;
 };
 
 template <typename T> inline status_t gpuFreeContext(T ctx) {
@@ -110,6 +105,9 @@ template <typename T> inline status_t gpuFreeContext(T ctx) {
     logError("cnCtxDestroy failed with error code %d", res);
     return status_t::ERROR;
   }
+  return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  // TODO
   return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
   // TODO

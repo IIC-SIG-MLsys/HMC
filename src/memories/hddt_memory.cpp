@@ -10,7 +10,7 @@ status_t Memory::init() { return this->memoryClass->init(); }
 
 status_t Memory::free() { return this->memoryClass->free(); }
 
-// create memory class according to memory type
+// create memory class according to device type
 std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
   switch (mem_type) {
   case MemoryType::CPU:
@@ -25,6 +25,8 @@ std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
   case MemoryType::HUAWEI_ASCEND_NPU:
     return std::make_unique<HuaweiMemory>(this->hmcDeviceId,
                                           this->hmcMemoryType);
+  case MemoryType::MOORE_GPU:
+    return std::make_unique<MusaMemory>(this->hmcDeviceId, this->hmcMemoryType);
   default:
     return nullptr;
   }
@@ -87,6 +89,10 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
     this->hmcMemoryType = MemoryType::HUAWEI_ASCEND_NPU;
 #endif
 
+#ifdef ENABLE_MUSA
+    this->hmcMemoryType = MemoryType::MOORE_GPU;
+#endif
+
     this->initStatus = status_t::SUCCESS;
   } else {
     this->initStatus = status_t::SUCCESS;
@@ -108,6 +114,10 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
     } else if (mem_type == MemoryType::HUAWEI_ASCEND_NPU) {
 #ifndef ENABLE_HUAWEI
       throw std::runtime_error("Huawei GPU is not supported");
+      this->initStatus = status_t::UNSUPPORT;
+#endif
+#ifdef ENABLE_MUSA
+      throw std::runtime_error("Moore GPU is not supported");
       this->initStatus = status_t::UNSUPPORT;
 #endif
     }

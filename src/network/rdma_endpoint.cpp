@@ -86,11 +86,11 @@ status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
   if (!addr || !mr) {
     return status_t::ERROR;
   }
-
   *mr = ibv_reg_mr(pd, addr, length,
                    IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
                        IBV_ACCESS_REMOTE_WRITE);
   if (!*mr) {
+    std::cout << pd << " " << addr << " " << length << std::endl;
     logError("Failed to register memory region");
     return status_t::ERROR;
   }
@@ -261,7 +261,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     send_size = std::min(half_buffer_size, remaining);
 
     // 可写，写当前块到远端
-    ret = writeDataNB(chunk_index * half_buffer_size, half_buffer_size);
+    ret = writeDataNB(chunk_index * half_buffer_size, send_size);
     if (ret != status_t::SUCCESS) {
       logError("Client::Send: Failed to post write data for chunk %zu", current_chunk);
       return ret;
@@ -285,7 +285,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
       size_t next_size = std::min(half_buffer_size, next_remaining);
 
       size_t bias = next_chunk_index * half_buffer_size;
-      void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) * half_buffer_size;
+      // void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) * half_buffer_size;
       mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, next_size, bias) : buffer->writeFromGpu(input_buffer, next_size, bias);
     }
 
@@ -319,7 +319,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
   // logDebug("Server::Recv: uhm_buffer_state %d", this->uhm_buffer_state.state[0]);
 
   // 接收要传入的块数量
-  const int SPIN_COUNT = 1; // 3ghz的cpu，4000次大约相当于200us，10:0.05us
+  const int SPIN_COUNT = 100; // 3ghz的cpu，4000次大约相当于200us，10:0.05us
   while (true) {
       auto tmp = uhm_buffer_state;
       if (tmp.state[chunk_index] == UHM_BUFFER_CAN_WRITE) {
@@ -351,6 +351,8 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
 
   while (current_chunk < num_recv_chunks) {
     chunk_index = current_chunk % 2;
+    // logDebug("current_chunk %zu, chunk_index %zu, uhm_buffer_state.state[chunk_index] %u\n", current_chunk, chunk_index, uhm_buffer_state.state[chunk_index]);
+    // logDebug会触发缓存刷新，当前方案采用volite对state加缓存屏障解决此问题
     if (this->uhm_buffer_state.state[chunk_index] == UHM_BUFFER_CAN_READ) {
       // 直接同步通知对面可写
       this->uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_WRITE; 
@@ -394,7 +396,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
         return status_t::ERROR;
       }
 
-      // std::cout<<"\tcurrent chunk\t"<<current_chunk<<"\ttotal chunk\t"<<num_recv_chunks<<"\n";
+      // logDebug("current chunk %zu, total chunk %zu\n", current_chunk, num_recv_chunks);
       accumulated_size += recv_size;
       current_chunk++;
     }

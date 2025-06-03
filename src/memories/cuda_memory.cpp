@@ -59,7 +59,7 @@ status_t CudaMemory::copyHostToDevice(void *dest, const void *src,
 
   ret = cudaMemcpy(dest, src, size, cudaMemcpyHostToDevice);
   if (ret != cudaSuccess) {
-    logError("failed to copy memory from host to memory");
+    logError("failed to copy memory from host to device");
     return status_t::ERROR;
   }
 

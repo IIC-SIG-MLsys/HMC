@@ -59,7 +59,7 @@ status_t RocmMemory::copyHostToDevice(void *dest, const void *src,
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyDeviceToHost);
   if (ret != hipSuccess) {
-    logError("failed to copy memory from host to memory");
+    logError("failed to copy memory from host to device");
     return status_t::ERROR;
   }
 
@@ -76,7 +76,7 @@ status_t RocmMemory::copyDeviceToHost(void *dest, const void *src,
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyHostToDevice);
   if (ret != hipSuccess) {
-    logError("failed to copy memory from host to memory");
+    logError("failed to copy memory from host to device");
     return status_t::ERROR;
   }
 
@@ -93,7 +93,7 @@ status_t RocmMemory::copyDeviceToDevice(void *dest, const void *src,
   }
   ret = hipMemcpy(dest, src, size, hipMemcpyDeviceToDevice);
   if (ret != hipSuccess) {
-    logError("failed to copy memory from host to memory");
+    logError("failed to copy memory from host to device");
     return status_t::ERROR;
   }
 

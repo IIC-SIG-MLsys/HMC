@@ -231,7 +231,7 @@ status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
       status_t::SUCCESS) { // metadata for both side.
     return status_t::ERROR;
   }
-  std::this_thread::sleep_for(std::chrono::milliseconds(3));
+  std::this_thread::sleep_for(std::chrono::milliseconds(5));
 
   // 等待接收和发送完成
   if (endpoint->pollCompletion(2) != status_t::SUCCESS) {

@@ -1,0 +1,1 @@
+./build/apps/uhm_app/uhm_server --mode=uhm

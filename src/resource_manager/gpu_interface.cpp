@@ -24,14 +24,41 @@ status_t gpuInit() {
   }
   return status_t::SUCCESS;
 #elif defined(ENABLE_NEUWARE)
-  CNresult res = cnInit(0);
+  // int device_count = 0;
+  CNresult res;
+  // CNdev cndev;
+  // CNcontext cnctx; // may be leak
+  res = cnInit(0);
   if (res != CN_SUCCESS) {
     logError("cnInit failed with error code %d", res);
     return status_t::ERROR;
   }
+  /* we need create ctx and maintain it in whole lifecycle */
+  // res = cnDeviceGetCount(&device_count);
+  // if (device_count <= 0){
+  //   logError("cnDeviceGetCount failed with error code %d", CN_ERROR_NO_DEVICE);
+  //   return status_t::ERROR;
+  // }
+  // res = cnDeviceGet(&cndev, 0);
+  // if (res != CN_SUCCESS) {
+  //   logError("cnDeviceGet 0 failed with error code %d", res);
+  //   return status_t::ERROR;
+  // }
+  // res = cnCtxCreate(&cnctx, 0, cndev);
+  // if (res != CN_SUCCESS) {
+  //   logError("cnCtxCreate failed with error code %d", res);
+  //   return status_t::ERROR;
+  // }
   return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
   // TODO
+  return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  musaError_t res = musaFree(0);
+  if (res != musaSuccess) {
+    logError("musaInit failed with error code %d\n", res);
+    return status_t::ERROR;
+  }
   return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
@@ -70,6 +97,15 @@ status_t gpuGetPcieBusId(std::string *bus_id, int device_id) {
 #elif defined(ENABLE_HUAWEI)
   // TODO
   return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  char pciBusId[16];
+  musaError_t res = musaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
+  if (res != musaSuccess) {
+    logError("hipDeviceGetPCIBusId failed with error code %d\n", res);
+    return status_t::ERROR;
+  }
+  *bus_id = std::string(pciBusId);
+  return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
 #endif
@@ -99,6 +135,13 @@ status_t gpuGetDeviceCount(int *device_count) {
   return status_t::SUCCESS;
 #elif defined(ENABLE_HUAWEI)
   // TODO
+  return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  musaError_t res = musaGetDeviceCount(device_count);
+  if (res != musaSuccess) {
+    logError("musaGetDeviceCount failed with error code %d\n", res);
+    return status_t::ERROR;
+  }
   return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
@@ -131,6 +174,13 @@ status_t gpuGetDeviceMemory(uint64_t *free_size, uint64_t *total_size) {
 #elif defined(ENABLE_HUAWEI)
   // TODO
   return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  musaError_t res = musaMemGetInfo(free_size, total_size);
+  if (res != musaSuccess) {
+    logError("hipMemGetInfo failed with error code %d\n", res);
+    return status_t::ERROR;
+  }
+  return status_t::SUCCESS;
 #else
   return status_t::UNSUPPORT;
 #endif
@@ -148,6 +198,13 @@ status_t gpuSetDevice(int device_id) {
   hipError_t res = hipSetDevice(device_id);
   if (res != hipSuccess) {
     logError("hipSetDevice failed with error code %d\n", res);
+    return status_t::ERROR;
+  }
+  return status_t::SUCCESS;
+#elif defined(ENABLE_MUSA)
+  musaError_t res = musaSetDevice(device_id);
+  if (res != musaSuccess) {
+    logError("musaSetDevice failed with error code %d\n", res);
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
