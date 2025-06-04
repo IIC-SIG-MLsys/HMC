@@ -7,6 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <arpa/inet.h>  // for inet_pton
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -16,8 +17,10 @@ using namespace std;
 
 const std::string DEFAULT_SERVER_IP = "192.168.2.248";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
+const std::string DEFAULT_TCP_IP = "192.168.2.248";
 std::string server_ip;
 std::string client_ip;
+std::string tcp_server_ip;
 const size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
 const int gpu_port = 2025;
@@ -47,7 +50,7 @@ std::string get_env_or_default(const char* var_name, const std::string& default_
 }
 
 // 控制函数（TCP 消息机制）
-int setup_tcp_control_socket(int port) {
+int setup_tcp_control_socket(int port, const std::string& bind_ip) {
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd == -1) {
     perror("socket failed");
@@ -59,8 +62,13 @@ int setup_tcp_control_socket(int port) {
 
   sockaddr_in address;
   address.sin_family = AF_INET;
-  address.sin_addr.s_addr = INADDR_ANY;
   address.sin_port = htons(port);
+
+  // 将字符串 IP 转换为 in_addr 并设置
+  if (inet_pton(AF_INET, bind_ip.c_str(), &address.sin_addr) <= 0) {
+    perror("Invalid bind IP address");
+    exit(EXIT_FAILURE);
+  }
 
   if (bind(server_fd, (struct sockaddr*)&address, sizeof(address)) < 0) {
     perror("bind failed");
@@ -72,13 +80,15 @@ int setup_tcp_control_socket(int port) {
     exit(EXIT_FAILURE);
   }
 
-  LOG(INFO) << "Waiting for TCP control connection on port " << port;
+  LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":" << port;
+
   int addrlen = sizeof(address);
   int new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
   if (new_socket < 0) {
     perror("accept failed");
     exit(EXIT_FAILURE);
   }
+
   LOG(INFO) << "TCP control connection established.";
   return new_socket;
 }
@@ -166,8 +176,9 @@ int main(int argc, char* argv[]) {
   std::string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 
-  std::string server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
-  std::string client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
+  server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
+  client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
+  tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
   std::mutex log_mutex;
 
@@ -185,16 +196,8 @@ int main(int argc, char* argv[]) {
     return -1;
   }
 
-  while (gpu_comm->checkConn(client_ip, ConnType::RDMA) != status_t::SUCCESS) {
-    std::this_thread::sleep_for(std::chrono::microseconds(10));
-  }
-  while (cpu_comm->checkConn(client_ip, ConnType::RDMA) != status_t::SUCCESS) {
-    std::this_thread::sleep_for(std::chrono::microseconds(10));
-  }
-  LOG(INFO) << "RDMA Connection established. Ready to receive.";
-
   // 启动 TCP 控制连接
-  ctrl_socket_fd = setup_tcp_control_socket(ctrl_port);
+  ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
 
   // 选择接收函数
   void (*recv_func)(Context) = nullptr;
@@ -215,7 +218,7 @@ int main(int argc, char* argv[]) {
         .size = total_size,
         .log_mutex = &log_mutex
     };
-
+    
     auto start_time = std::chrono::high_resolution_clock::now();
     recv_func(ctx);
     auto end_time = std::chrono::high_resolution_clock::now();

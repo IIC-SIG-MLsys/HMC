@@ -23,8 +23,10 @@ using namespace std::chrono;
 
 const std::string DEFAULT_SERVER_IP = "192.168.2.248";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
+const std::string DEFAULT_TCP_IP = "192.168.2.248";
 std::string server_ip;
 std::string client_ip;
+std::string tcp_server_ip;
 size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
 const int gpu_port = 2025;
@@ -56,7 +58,7 @@ std::string get_env_or_default(const char* var_name, const std::string& default_
   return (val != nullptr) ? std::string(val) : default_val;
 }
 
-// ===== TCP 控制信号发送函数 =====
+// ===== TCP 连接 =====
 bool connect_control_server(const std::string& server_ip, int ctrl_port = 9099) {
   ctrl_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (ctrl_sock < 0) {
@@ -220,8 +222,9 @@ int main(int argc, char* argv[]) {
   string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 
-  std::string server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
-  std::string client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
+  server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
+  client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
+  tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
   gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
@@ -231,9 +234,17 @@ int main(int argc, char* argv[]) {
   gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
   cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);
 
-  if (!connect_control_server(server_ip, ctrl_port)) {
-    std::cerr << "Failed to connect control server" << std::endl;
-    return -1;
+  // wait server start
+  std::this_thread::sleep_for(std::chrono::seconds(1));
+
+  int retry_count = 0;
+  while (!connect_control_server(tcp_server_ip, ctrl_port)) {
+    if (retry_count > 5) {
+      std::cerr << "Failed to connect control server :"<< tcp_server_ip << std::endl;
+      return -1;
+    }
+    retry_count++;
+    std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
   void (*send_func)(Context) = nullptr;
