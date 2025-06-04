@@ -143,7 +143,7 @@ void send_channel_slice_serial(Context ctx) {
       std::cerr << "Send control message failed" << std::endl;
     }
 
-    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
   }
 }
 
@@ -172,7 +172,7 @@ void send_channel_slice_g2h2g(Context ctx) {
       std::cerr << "Send control message failed" << std::endl;
     }
 
-    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
   }
 
   cpu_mem_op->freeBuffer(host_buffer);
