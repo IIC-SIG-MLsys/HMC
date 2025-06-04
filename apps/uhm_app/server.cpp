@@ -16,7 +16,8 @@ using namespace std;
 
 const std::string DEFAULT_SERVER_IP = "192.168.2.248";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-
+std::string server_ip;
+std::string client_ip;
 const size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
 const int gpu_port = 2025;
