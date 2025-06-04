@@ -258,7 +258,7 @@ int main(int argc, char* argv[]) {
   }
   csv_file.close();
 
-  for (int power = 3; power <= 26; ++power) {
+  for (int power = 2; power <= 26; ++power) { // 暂时有bug，发送端多发一次，即接受端的缓冲区大一些做测试，这里是2，服务端为3
     size_t total_size = pow(2, power);
     std::vector<uint8_t> host_data(total_size, 'A');
 

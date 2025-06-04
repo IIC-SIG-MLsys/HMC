@@ -212,9 +212,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
   uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
   uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
   // logDebug("send flags is %ld", send_flags); // 有概率触发读取不到最新值的情况，主动赋值或者打印会更新缓存
-  __sync_synchronize(); // 写前屏障
   uhm_buffer_state.length = send_flags;
-  __sync_synchronize(); // 写后屏障
 
   void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state);
   void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address);
