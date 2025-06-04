@@ -81,17 +81,22 @@ status_t MusaMemory::allocateBuffer(void **addr, size_t size) {
    return this->allocateBuffer(addr, buf_size);
  }
  
- status_t MusaMemory::freeBuffer(void *addr) {
-   musaError_t ret;
- 
-   ret = musaFree(addr);
-   if (ret != musaSuccess) {
-     logError("failed to free memory");
-     return status_t::ERROR;
-   }
- 
-   return status_t::SUCCESS;
+
+status_t MusaMemory::freeBuffer(void *addr) {
+ // 1) Unregister (unpin) the host pointer from the GPU
+ musaError_t unregister_ret = musaHostUnregister(addr);
+ if (unregister_ret != musaSuccess) {
+  logError("musaHostUnregister failed: %d", unregister_ret);
+  return status_t::ERROR;
  }
+
+ // 2) Free the aligned host buffer (use ::free to call the global function)
+ ::free(addr);
+
+ return status_t::SUCCESS;
+}
+
+
  
  status_t MusaMemory::copyHostToDevice(void *dest, const void *src,
                                        size_t size) {
