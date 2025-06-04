@@ -34,14 +34,14 @@ status_t RDMAEndpoint::closeEndpoint() {
 status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
   // 实现写入远端数据逻辑
   if (data_bias + size > buffer->buffer_size) {
-    logError("Invalid data bias and size");
+    logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld", buffer->buffer_size, data_bias+size);
     return status_t::ERROR;
   }
   if (writeDataNB(data_bias, size) != status_t::SUCCESS) {
     logError("Error for post_write");
     return status_t::ERROR;
   }
-  if (pollCompletion(1) != status_t::SUCCESS) {
+  if (pollCompletion(0) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
@@ -51,14 +51,14 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
   // 实现读取远端数据逻辑
   if (data_bias + size > buffer->buffer_size) {
-    logError("Invalid data bias and size");
+    logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld", buffer->buffer_size, data_bias+size);
     return status_t::ERROR;
   }
   if (readDataNB(data_bias, size) != status_t::SUCCESS) {
     logError("Error for post_read");
     return status_t::ERROR;
   }
-  if (pollCompletion(1) != status_t::SUCCESS) {
+  if (pollCompletion(0) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
@@ -208,9 +208,14 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
   size_t send_size = std::min(half_buffer_size, send_flags);
 
   // 发送标志位，通知对面要发送多少数据
+  
   uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
   uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
+  // logDebug("send flags is %ld", send_flags); // 有概率触发读取不到最新值的情况，主动赋值或者打印会更新缓存
+  __sync_synchronize(); // 写前屏障
   uhm_buffer_state.length = send_flags;
+  __sync_synchronize(); // 写后屏障
+
   void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state);
   void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address);
   ret = postWrite(localAddr, remoteAddr, sizeof(uhm_buffer_state), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);
@@ -367,6 +372,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       // 接收大小
       if(current_chunk == num_recv_chunks - 1){ // 最后一次接收
         recv_size = *recv_flags - accumulated_size;
+        logDebug("Server::Recv: Receive flag is %ld, accumulated size is %ld", *recv_flags, accumulated_size);
       } else {
         recv_size = half_buffer_size;
       }
@@ -389,7 +395,6 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       void* dest = static_cast<char *>(output_buffer) + accumulated_size;
       mem_type == MemoryType::CPU ? buffer->readToCpu(dest, recv_size, bias) : buffer->readToGpu(dest, recv_size, bias);
     
-
       // 处理通知完成消息，防止漏掉结束消息
       if (pollCompletion(0) != status_t::SUCCESS) {
         logError("Failed to poll completion queue");

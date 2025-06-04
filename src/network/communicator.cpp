@@ -145,7 +145,7 @@ ConnBuffer::~ConnBuffer() {
 // 从CPU向ConnBuffer写入数据
 status_t ConnBuffer::writeFromCpu(void *src, size_t size, size_t bias) {
   if (bias + size > buffer_size) {
-    logError("Invalid data bias and size");
+    logError("writeFromCpu: Invalid data bias and size");
     return status_t::ERROR;
   }
   return mem_ops->copyHostToDevice(static_cast<char *>(ptr) + bias, src, size);
@@ -154,7 +154,7 @@ status_t ConnBuffer::writeFromCpu(void *src, size_t size, size_t bias) {
 // 从ConnBuffer读取数据到CPU
 status_t ConnBuffer::readToCpu(void *dest, size_t size, size_t bias) {
   if (bias + size > buffer_size) {
-    logError("Invalid data bias and size");
+    logError("readToCpu: Invalid data bias and size");
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
@@ -167,12 +167,12 @@ status_t ConnBuffer::readToCpu(void *dest, size_t size, size_t bias) {
 // 从GPU向ConnBuffer写入数据
 status_t ConnBuffer::writeFromGpu(void *src, size_t size, size_t bias) {
   if (bias + size > buffer_size) {
-    logError("Invalid data bias and size");
+    logError("writeFromGpu: Invalid data bias and size");
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
-    mem_ops->copyDeviceToHost(static_cast<char *>(ptr) + bias, src, size);
-    return status_t::SUCCESS;
+    logError("Error write data from GPU to CPU using CPU ConnBuffer, Please use gpu mem_ops.");
+    return status_t::ERROR;
   }
   return mem_ops->copyDeviceToDevice(static_cast<char *>(ptr) + bias, src,
                                      size);
@@ -181,12 +181,12 @@ status_t ConnBuffer::writeFromGpu(void *src, size_t size, size_t bias) {
 // 从ConnBuffer读取数据到GPU
 status_t ConnBuffer::readToGpu(void *dest, size_t size, size_t bias) {
   if (bias + size > buffer_size) {
-    logError("Invalid data bias and size");
+    logError("readToGpu: Invalid data bias and size");
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
-    mem_ops->copyHostToDevice(dest, static_cast<char *>(ptr) + bias, size);
-    return status_t::SUCCESS;
+    logError("Error read data from CPU to GPU using CPU ConnBuffer, Please use gpu mem_ops.");
+    return status_t::ERROR;
   }
   return mem_ops->copyDeviceToDevice(dest, static_cast<char *>(ptr) + bias,
                                      size);

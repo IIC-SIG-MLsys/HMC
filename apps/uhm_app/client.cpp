@@ -98,34 +98,8 @@ void close_control_connection() {
   }
 }
 
-void send_channel_slice_serial(Context ctx) {
-  // total_time = 0;
-  // const size_t chunk_size = buffer_size / 2;
-  // size_t remaining = ctx.size;
-  // char* ptr = reinterpret_cast<char*>(ctx.data_ptr);
-  // std::vector<uint8_t> host_data1(chunk_size, 'A');
-
-  // while (remaining > 0) {
-  //   size_t send_size = min(chunk_size, remaining);
-  //   auto start = high_resolution_clock::now();
-
-  //   mem_op->copyHostToDevice(ptr, host_data1.data(), send_size);
-  //   auto status = ctx.comm->sendDataTo(0, ptr, send_size, MemoryType::DEFAULT);
-  //   auto end = high_resolution_clock::now();
-
-  //   if (status != status_t::SUCCESS) {
-  //     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //     LOG(ERROR) << "[Serial] Send failed at offset " << (ctx.size - remaining);
-  //     return;
-  //   }
-
-  //   total_time += duration_cast<microseconds>(end - start).count();
-  //   ptr += send_size;
-  //   remaining -= send_size;
-  // }
-}
-
 void send_channel_slice_uhm(Context ctx) {
+  total_time = 0;
   auto start = high_resolution_clock::now();
   auto status = gpu_comm->sendDataTo(server_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT);
   auto end = high_resolution_clock::now();
@@ -135,48 +109,86 @@ void send_channel_slice_uhm(Context ctx) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UHM] Send failed.";
   }
+}
 
-  if (!send_control_message("START")) {
-    std::cerr << "Send control message failed" << std::endl;
+void send_channel_slice_serial(Context ctx) {
+  const size_t chunk_size = buffer_size / 2;
+  size_t remaining = ctx.size;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  total_time = 0;
+
+  for (size_t i = 0; i < num_chunks; ++i) {
+    auto start1 = high_resolution_clock::now();
+    size_t send_size = min(chunk_size, remaining);
+    gpu_buffer->writeFromGpu(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size, 0); // 从gpu直接拷贝到gpu buffer
+    auto end1 = high_resolution_clock::now();
+    auto start2 = high_resolution_clock::now();
+    // LOG(INFO) << ctx.size << " " << ctx.size-remaining << " " << send_size;
+    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA); // 从gpu buffer 发送到对方 gpu buffer
+    remaining -= send_size;
+    auto end2 = high_resolution_clock::now();
+
+    if (!send_control_message("Finished")) {
+      std::cerr << "Send control message failed" << std::endl;
+    }
+
+    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
   }
 }
 
+// 分块的gpu->cpu->cpu->gpu
 void send_channel_slice_g2h2g(Context ctx) {
-  // Memory mem_cpu(0, MemoryType::CPU);
-  // void* host_buffer;
-  // mem_cpu.allocateBuffer(&host_buffer, ctx.size);
+  void* host_buffer;
+  cpu_mem_op->allocateBuffer(&host_buffer, ctx.size);
 
-  // auto start = high_resolution_clock::now();
-  // mem_op->copyDeviceToHost(host_buffer, ctx.data_ptr, ctx.size);
-  // auto status = ctx.comm->sendDataTo(0, host_buffer, ctx.size, MemoryType::CPU);
-  // auto end = high_resolution_clock::now();
+  const size_t chunk_size = buffer_size / 2;
+  size_t remaining = ctx.size;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  total_time = 0;
 
-  // total_time = duration_cast<microseconds>(end - start).count();
+  for (size_t i = 0; i < num_chunks; ++i) {
+    auto start1 = high_resolution_clock::now();
+    size_t send_size = min(chunk_size, remaining);
+    gpu_mem_op->copyDeviceToHost(cpu_buffer->ptr, static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size); // 从gpu直接拷贝到cpu buffer
+    auto end1 = high_resolution_clock::now();
+    auto start2 = high_resolution_clock::now();
+    // LOG(INFO) << ctx.size << " " << ctx.size-remaining << " " << send_size;
+    cpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA); // 从cpu buffer 发送到对方 cpu buffer
+    remaining -= send_size;
+    auto end2 = high_resolution_clock::now();
 
-  // if (status != status_t::SUCCESS) {
-  //   std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //   LOG(ERROR) << "[G2H2G] Send failed.";
-  // }
+    if (!send_control_message("Finished")) {
+      std::cerr << "Send control message failed" << std::endl;
+    }
 
-  // mem_cpu.freeBuffer(host_buffer);
+    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+  }
+
+  cpu_mem_op->freeBuffer(host_buffer);
 }
 
+// 主动 RDMA Write
 void send_channel_slice_rdma_cpu(Context ctx) {
-  // const size_t chunk_size = buffer_size / 2;
-  // size_t remaining = ctx.size;
-  // size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  const size_t chunk_size = buffer_size / 2;
+  size_t remaining = ctx.size;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  total_time = 0;
+  
+  for (size_t i = 0; i < num_chunks; ++i) {
+    size_t send_size = min(chunk_size, remaining);
+    // gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size-remaining);
 
-  // std::vector<uint8_t> host_data(ctx.size, 'A');
+    auto start = high_resolution_clock::now();
+    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    remaining -= send_size;
+    auto end = high_resolution_clock::now();
 
-  // auto start = high_resolution_clock::now();
-  // for (size_t i = 0; i < num_chunks; ++i) {
-  //   size_t send_size = min(chunk_size, remaining);
-  //   buffer->writeFromCpu(host_data.data(), send_size, 0);
-  //   ctx.comm->writeTo(0, 0, send_size, ConnType::RDMA);
-  //   remaining -= send_size;
-  // }
-  // auto end = high_resolution_clock::now();
-  // total_time = duration_cast<microseconds>(end - start).count();
+    total_time += duration_cast<microseconds>(end - start).count();
+  }
+
+  if (!send_control_message("Finished")) {
+    std::cerr << "Send control message failed" << std::endl;
+  }
 }
 
 std::string get_mode_from_args(int argc, char* argv[]) {
@@ -195,7 +207,7 @@ int main(int argc, char* argv[]) {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
 
-  // ./client --mode=serial/uhm/g2h2g/rdma_cpu
+  // ./client --mode serial/uhm/g2h2g/rdma_cpu
   string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 

@@ -86,60 +86,51 @@ void close_control_socket(int& sock) {
 void wait_for_control_message(int socket_fd) {
   char buffer[16] = {0};
   int valread = read(socket_fd, buffer, sizeof(buffer));
-  if (valread <= 0 || std::string(buffer).find("START") == std::string::npos) {
+  if (valread <= 0 || std::string(buffer).find("Finished") == std::string::npos) {
     LOG(ERROR) << "Unexpected or no control message received.";
     exit(EXIT_FAILURE);
   }
-  LOG(INFO) << "Received control signal: " << buffer;
+  // LOG(INFO) << "Received control signal: " << buffer;
 }
 
-// 接收函数：UHM
+// 接收函数：UHM：GPU到GPU的点对点直传
 void recv_channel_slice_uhm(Context ctx) {
   size_t flags;
   if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "UHM Receive failed.";
   }
-  wait_for_control_message(ctrl_socket_fd);
 }
 
-// 接收函数：Serial（分段）
+// 接收函数：Serial（分段）：被动处理每次传输结束
 void recv_channel_slice_serial(Context ctx) {
-  // const size_t half_buffer_size = buffer_size / 2;
+  const size_t chunk_size = buffer_size / 2;
   // size_t remaining = ctx.size;
-  // uint8_t* ptr = ctx.dest_ptr;
-
-  // while (remaining > 0) {
-  //   size_t chunk_size = std::min(half_buffer_size, remaining);
-  //   size_t flags;
-
-  //   if (ctx.comm->recvDataFrom(0, ptr, chunk_size, MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
-  //     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //     LOG(ERROR) << "[Channel " << ctx.id << "] Serial Receive failed.";
-  //     return;
-  //   }
-
-  //   remaining -= chunk_size;
-  //   ptr += chunk_size;
-  // }
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  for (size_t i = 0; i < num_chunks; ++i) {
+    wait_for_control_message(ctrl_socket_fd);
+    // copy逻辑有问题，暂时不用
+    // gpu_mem_op->copyDeviceToDevice(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), gpu_buffer->ptr, chunk_size); // 从gpu直接拷贝到cpu buffer
+    // remaining -= chunk_size;
+  }
 }
 
-// 接收函数：G2H2G
+// 接收函数：G2H2G：被动处理每次传输结束
 void recv_channel_slice_g2h2g(Context ctx) {
-  // size_t flags;
-  // if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
-  //   std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //   LOG(ERROR) << "[Channel " << ctx.id << "] G2H2G Receive failed.";
-  // }
+  const size_t chunk_size = buffer_size / 2;
+  // size_t remaining = ctx.size;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+  for (size_t i = 0; i < num_chunks; ++i) {
+    wait_for_control_message(ctrl_socket_fd);
+    // copy逻辑有问题，暂时不用
+    // gpu_mem_op->copyHostToDevice(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), cpu_buffer->ptr, chunk_size); // 从gpu直接拷贝到cpu buffer
+    // remaining -= chunk_size;
+  }
 }
 
-// 接收函数：RDMA CPU
+// 接收函数：无需操作，被动接收 RDMA Write
 void recv_channel_slice_rdma_cpu(Context ctx) {
-  // size_t flags;
-  // if (ctx.comm->recvDataFrom(0, ctx.dest_ptr, ctx.size, MemoryType::CPU, &flags) != status_t::SUCCESS) {
-  //   std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-  //   LOG(ERROR) << "[Channel " << ctx.id << "] RDMA CPU Receive failed.";
-  // }
+  wait_for_control_message(ctrl_socket_fd);
 }
 
 // 获取运行模式
@@ -163,6 +154,7 @@ int main(int argc, char* argv[]) {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
 
+  // ./server --mode serial/uhm/g2h2g/rdma_cpu
   std::string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 
@@ -200,7 +192,7 @@ int main(int argc, char* argv[]) {
   else if (mode == "rdma_cpu") recv_func = recv_channel_slice_rdma_cpu;
   else recv_func = recv_channel_slice_uhm;
 
-  for (int power = 3; power <= 28; ++power) {
+  for (int power = 3; power <= 26; ++power) {
     const size_t total_size = std::pow(2, power);
     std::vector<uint8_t> host_data(total_size);
     void* gpu_ptr;
@@ -222,7 +214,7 @@ int main(int argc, char* argv[]) {
     double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
     double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
 
-    gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
+    if (mode != "g2h2g") gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size); // g2h2g已经在内部分段直接写入了
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
