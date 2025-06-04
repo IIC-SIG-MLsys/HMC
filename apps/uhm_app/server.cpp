@@ -14,10 +14,11 @@
 using namespace hmc;
 using namespace std;
 
+const std::string DEFAULT_SERVER_IP = "192.168.2.248";
+const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
+
 const size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
-const std::string server_ip = "192.168.2.248";
-const std::string client_ip = "192.168.2.248";
 const int gpu_port = 2025;
 const int cpu_port = 2026;
 const int ctrl_port = 2027;  // TCP 控制端口
@@ -37,6 +38,12 @@ struct Context {
   size_t size;
   std::mutex* log_mutex;
 };
+
+// 使用函数封装环境变量读取逻辑
+std::string get_env_or_default(const char* var_name, const std::string& default_val) {
+  const char* val = getenv(var_name);
+  return (val != nullptr) ? std::string(val) : default_val;
+}
 
 // 控制函数（TCP 消息机制）
 int setup_tcp_control_socket(int port) {
@@ -157,6 +164,9 @@ int main(int argc, char* argv[]) {
   // ./server --mode serial/uhm/g2h2g/rdma_cpu
   std::string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
+
+  std::string server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
+  std::string client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
 
   std::mutex log_mutex;
 

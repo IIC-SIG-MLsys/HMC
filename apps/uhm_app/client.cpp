@@ -9,6 +9,7 @@
 #include <mutex>
 #include <thread>
 #include <cstring>
+#include <cstdlib>
 #include <sys/socket.h>
 #include <arpa/inet.h>
 #include <unistd.h>
@@ -20,8 +21,8 @@ using namespace hmc;
 using namespace std;
 using namespace std::chrono;
 
-const std::string server_ip = "192.168.2.248";
-const std::string client_ip = "192.168.2.248";
+const std::string DEFAULT_SERVER_IP = "192.168.2.248";
+const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
 size_t buffer_size = 2048ULL * 32;
 const int device_id = 0;
 const int gpu_port = 2025;
@@ -46,6 +47,12 @@ struct Context {
 
 long long total_time = 0;
 std::mutex log_mutex;
+
+// 使用函数封装环境变量读取逻辑
+std::string get_env_or_default(const char* var_name, const std::string& default_val) {
+  const char* val = getenv(var_name);
+  return (val != nullptr) ? std::string(val) : default_val;
+}
 
 // ===== TCP 控制信号发送函数 =====
 bool connect_control_server(const std::string& server_ip, int ctrl_port = 9099) {
@@ -210,6 +217,9 @@ int main(int argc, char* argv[]) {
   // ./client --mode serial/uhm/g2h2g/rdma_cpu
   string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
+
+  std::string server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
+  std::string client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
 
   gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
