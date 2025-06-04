@@ -20,10 +20,9 @@
 using namespace hmc;
 using namespace std;
 using namespace std::chrono;
-
-const std::string DEFAULT_SERVER_IP = "192.168.2.248";
+const std::string DEFAULT_SERVER_IP = "192.168.2.236";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-const std::string DEFAULT_TCP_IP = "192.168.2.248";
+const std::string DEFAULT_TCP_IP = "10.102.0.241";
 std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
@@ -143,7 +142,7 @@ void send_channel_slice_serial(Context ctx) {
       std::cerr << "Send control message failed" << std::endl;
     }
 
-    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
   }
 }
 
@@ -172,7 +171,7 @@ void send_channel_slice_g2h2g(Context ctx) {
       std::cerr << "Send control message failed" << std::endl;
     }
 
-    total_time += (duration_cast<microseconds>(end1 - start1).count() * 2 + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
   }
 
   cpu_mem_op->freeBuffer(host_buffer);
@@ -281,7 +280,7 @@ int main(int argc, char* argv[]) {
 
     ofstream file("performanceTest_client.csv", ios::app);
     if (file.is_open()) {
-      file << mode << "," << (total_size / (1024 * 1024)) << "," << total_time << "," << throughput_Gbps << "\n";
+      file << mode << "," << power << "," << total_time << "," << throughput_Gbps << "\n";
       file.close();
     }
 
