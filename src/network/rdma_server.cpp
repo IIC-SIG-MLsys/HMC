@@ -86,7 +86,7 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
       }
       logDebug("endpoint cm_id %p", event_copy.id);
       std::unique_ptr<hmc::Endpoint> ep = handleConnection(event_copy.id);
-      conn_manager->_addEndpoint(ip, std::move(ep));
+      conn_manager->_addEndpoint(recv_ip, std::move(ep));
       // conn_manager->_printEndpointMap();
       // handleConnection的时候，内部会处理一个链接建立完成事件
     } else if (event_copy.event == RDMA_CM_EVENT_DISCONNECTED) {
