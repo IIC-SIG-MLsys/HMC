@@ -17,7 +17,12 @@ createServer(ConnType serverType, std::shared_ptr<ConnBuffer> buffer,
   case ConnType::RDMA:
     return std::make_unique<RDMAServer>(buffer, conn_manager);
   case ConnType::UCX:
-    return std::make_unique<UCXServer>(conn_manager); // TODO:
+#ifdef ENABLE_UCX
+    return std::make_unique<UCXServer>(conn_manager);
+#else
+    logError("UCX support not compiled in");
+    return nullptr;
+#endif
   default:
     throw std::invalid_argument("Unknown server type");
   }
@@ -31,6 +36,11 @@ status_t ConnManager::initiateServer(std::string ip, uint16_t port,
 
   // 使用工厂方法创建 Server 实例
   server = createServer(serverType, buffer, conn_manager_shared);
+  
+  if (!server) {
+    logError("Failed to create server for type %d", static_cast<int>(serverType));
+    return status_t::ERROR;
+  }
 
   // 启动一个新的线程运行服务器的监听循环
   server_thread = std::thread([this, ip = std::move(ip), port]() mutable {
@@ -69,18 +79,27 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
   case ConnType::RDMA: {
     auto client = new RDMAClient(buffer);
     endpoint = client->connect(targetIp, targetPort);
+    delete client;  // 清理客户端对象
     break;
   }
   case ConnType::UCX: {
+#ifdef ENABLE_UCX
     auto client = new UCXClient(buffer);
     endpoint = client->connect(targetIp, targetPort);
+    delete client;  // 清理客户端对象
+#else
+    logError("UCX support not compiled in");
+    return status_t::UNSUPPORT;
+#endif
     break;
   }
   default:
+    logError("Unknown client type: %d", static_cast<int>(clientType));
     return status_t::INVALID_CONFIG;
   }
 
   if (!endpoint) {
+    logError("Failed to create endpoint for %s:%d", targetIp.c_str(), targetPort);
     return status_t::ERROR;
   }
 
@@ -89,6 +108,7 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
   // std::lock_guard<std::mutex> entry_lock(entry.mutex); // 必是单独访问,不需要锁
   entry.endpoint = std::move(endpoint);
 
+  logInfo("Successfully created endpoint for %s:%d", targetIp.c_str(), targetPort);
   return status_t::SUCCESS;
 }
 
@@ -99,6 +119,7 @@ void ConnManager::_addEndpoint(std::string ip,
     auto &entry = endpoint_map[ip];
     // std::lock_guard<std::mutex> entry_lock(entry.mutex);  // 必是单独访问,不需要锁
     entry.endpoint = std::move(endpoint);
+    logDebug("Added endpoint for IP: %s", ip.c_str());
   } else {
     logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");
   }
@@ -116,8 +137,10 @@ void ConnManager::_removeEndpoint(std::string ip) {
   {
     std::lock_guard<std::mutex> lock(endpoint_map_mutex);
     auto it = endpoint_map.find(ip);
-    if (it == endpoint_map.end())
+    if (it == endpoint_map.end()) {
+      logDebug("Endpoint for IP %s not found", ip.c_str());
       return;
+    }
     // 锁定条目后转移所有权
     // 强制删除ep时,无需锁,因为一方已经决定要断开了
     to_delete = std::move(it->second.endpoint);
@@ -125,13 +148,33 @@ void ConnManager::_removeEndpoint(std::string ip) {
   }
   // 在此处同步等待资源释放
   to_delete.reset(); // 显式的关闭ep
+  logDebug("Removed endpoint for IP: %s", ip.c_str());
   return;
 }
 
 ConnManager::~ConnManager() {
+  // 先停止服务器
+  if (server) {
+    server->stopListen();
+  }
+  
+  // 等待服务器线程结束
   if (server_thread.joinable()) {
     server_thread.join(); // 确保线程正确结束
   }
+  
+  // 清理所有端点
+  {
+    std::lock_guard<std::mutex> lock(endpoint_map_mutex);
+    for (auto& pair : endpoint_map) {
+      if (pair.second.endpoint) {
+        pair.second.endpoint->closeEndpoint();
+      }
+    }
+    endpoint_map.clear();
+  }
+  
+  logDebug("ConnManager destroyed");
 }
 
 } // namespace hmc
