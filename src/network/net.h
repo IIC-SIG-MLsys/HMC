@@ -137,6 +137,11 @@ public:
     }
   }
 
+  // 获取缓冲区，用于UCX支持
+  std::shared_ptr<ConnBuffer> getBuffer() {
+    return buffer;
+  }
+
   ~ConnManager();
 
 private:

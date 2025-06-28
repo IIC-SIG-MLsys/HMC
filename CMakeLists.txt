@@ -51,6 +51,20 @@ include_directories(src)
 
 # RDMA 支持
 include(FindRdma)
+if(NOT RDMA_FOUND)
+    message(FATAL_ERROR "RDMA is required but was not found.")
+endif()
+
+# UCX 支持
+include(FindUcx)
+if(UCX_FOUND)
+    add_definitions(-DENABLE_UCX)
+    message(STATUS "UCX support enabled")
+    message(STATUS "UCX include: ${UCX_INCLUDE_DIR}")
+    message(STATUS "UCX libraries: ${UCX_LIBRARIES}")
+else()
+    message(WARNING "UCX not found. UCX support will be disabled.")
+endif()
 
 file(GLOB_RECURSE SRC_RECURSE "src/*.cpp")
 if(NOT SRC_RECURSE)
@@ -63,11 +77,14 @@ if(BUILD_STATIC_LIB)
     target_include_directories(hmc_static_lib PUBLIC include)
 
     # RDMA
-    if(RDMA_FOUND)
-        target_include_directories(hmc_static_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
-        target_link_libraries(hmc_static_lib PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
-    else()
-        message(FATAL_ERROR "RDMA is required but was not found.")
+    target_include_directories(hmc_static_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
+    target_link_libraries(hmc_static_lib PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
+
+    # UCX
+    if(UCX_FOUND)
+        target_include_directories(hmc_static_lib PUBLIC ${UCX_INCLUDE_DIR})
+        target_link_libraries(hmc_static_lib PUBLIC ${UCX_LIBRARIES})
+        target_compile_definitions(hmc_static_lib PUBLIC ENABLE_UCX)
     endif()
 
     # GLOG
@@ -75,9 +92,17 @@ if(BUILD_STATIC_LIB)
     target_include_directories(hmc_static_lib PUBLIC ${GLOG_INCLUDE_DIRS})
     target_link_libraries(hmc_static_lib PUBLIC glog)
 
-    # MUSA
-    if(MUSA_FOUND)
-        target_link_libraries(hmc_static_lib PUBLIC hmc_musa_shared ${MUSA_LIBRARIES})
+    # 平台特定库链接
+    if(ROCM_FOUND)
+        target_link_libraries(hmc_static_lib PUBLIC ${HIP_LIBRARIES})
+    elseif(CUDA_FOUND)
+        target_link_libraries(hmc_static_lib PUBLIC ${CUDA_LIBRARIES})
+    elseif(NEUWARE_FOUND)
+        target_link_libraries(hmc_static_lib PUBLIC ${NEUWARE_LIBRARIES})
+    elseif(HUAWEI_FOUND)
+        target_link_libraries(hmc_static_lib PUBLIC ${HUAWEI_LIBRARIES})
+    elseif(MUSA_FOUND)
+        target_link_libraries(hmc_static_lib PUBLIC ${MUSA_LIBRARIES})
     endif()
 
     install(TARGETS hmc_static_lib DESTINATION lib)
@@ -87,20 +112,33 @@ endif()
 add_library(hmc_shared_lib SHARED ${SRC_RECURSE})
 target_include_directories(hmc_shared_lib PUBLIC include)
 
-if(RDMA_FOUND)
-    target_include_directories(hmc_shared_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
-    target_link_libraries(hmc_shared_lib PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
-else()
-    message(FATAL_ERROR "RDMA is required but was not found.")
+# RDMA 支持
+target_include_directories(hmc_shared_lib PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
+target_link_libraries(hmc_shared_lib PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
+
+# UCX 支持
+if(UCX_FOUND)
+    target_include_directories(hmc_shared_lib PUBLIC ${UCX_INCLUDE_DIR})
+    target_link_libraries(hmc_shared_lib PUBLIC ${UCX_LIBRARIES})
+    target_compile_definitions(hmc_shared_lib PUBLIC ENABLE_UCX)
 endif()
 
+# GLOG
 find_package(glog REQUIRED)
 target_include_directories(hmc_shared_lib PUBLIC ${GLOG_INCLUDE_DIRS})
 target_link_libraries(hmc_shared_lib PUBLIC glog)
 
-if(MUSA_FOUND)
+# 平台特定库链接
+if(ROCM_FOUND)
+    target_link_libraries(hmc_shared_lib PUBLIC ${HIP_LIBRARIES})
+elseif(CUDA_FOUND)
+    target_link_libraries(hmc_shared_lib PUBLIC ${CUDA_LIBRARIES})
+elseif(NEUWARE_FOUND)
+    target_link_libraries(hmc_shared_lib PUBLIC ${NEUWARE_LIBRARIES})
+elseif(HUAWEI_FOUND)
+    target_link_libraries(hmc_shared_lib PUBLIC ${HUAWEI_LIBRARIES})
+elseif(MUSA_FOUND)
     target_link_libraries(hmc_shared_lib PUBLIC ${MUSA_LIBRARIES})
-    #target_link_libraries(hmc_shared_lib PUBLIC hmc_musa_shared ${MUSA_LIBRARIES})
 endif()
 
 # ===== PYTHON MODULE =====
@@ -128,7 +166,7 @@ if(BUILD_PYTHON_MOD)
     target_link_libraries(hmc PRIVATE hmc_static_lib)
 
     if(MUSA_FOUND)
-        target_link_libraries(hmc PRIVATE hmc_musa_shared ${MUSA_LIBRARIES})
+        target_link_libraries(hmc PRIVATE ${MUSA_LIBRARIES})
     endif()
 
     install(TARGETS hmc LIBRARY DESTINATION ${CMAKE_SOURCE_DIR}/python/pkg)
@@ -141,6 +179,7 @@ install(DIRECTORY include/ DESTINATION include)
 add_subdirectory(apps/uhm_app)
 # add_subdirectory(apps/comm_app)
 # add_subdirectory(apps/python_app)
+# add_subdirectory(apps/ucx_app)
 
 # ===== TESTS =====
 # enable_testing()
