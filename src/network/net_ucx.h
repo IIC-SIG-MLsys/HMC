@@ -15,6 +15,7 @@
 #include <iostream>
 #include <chrono>
 #include <iomanip>
+#include <vector>
 
 namespace hmc {
 
@@ -77,19 +78,10 @@ public:
     status_t writeData(size_t data_bias, size_t size) override;
     status_t readData(size_t data_bias, size_t size) override;
 
-    // Non-blocking interfaces - 简化实现
-    status_t writeDataNB(size_t data_bias, size_t size) override {
-        return writeData(data_bias, size);  // 目前使用阻塞版本
-    }
-    status_t readDataNB(size_t data_bias, size_t size) override {
-        return readData(data_bias, size);   // 目前使用阻塞版本
-    }
-    status_t pollCompletion(int num_completions_to_process) override {
-        for (int i = 0; i < num_completions_to_process; i++) {
-            ucp_worker_progress(worker);
-        }
-        return status_t::SUCCESS;
-    }
+    // Non-blocking interfaces - 真正的非阻塞实现
+    status_t writeDataNB(size_t data_bias, size_t size) override;
+    status_t readDataNB(size_t data_bias, size_t size) override;
+    status_t pollCompletion(int num_completions_to_process) override;
 
     // UHM interface - UCX不支持，返回错误
     status_t uhm_send(void *input_buffer, const size_t send_flags, 
@@ -111,14 +103,10 @@ public:
     status_t exchangeMemoryInfo();
 
     // 获取远程内存地址
-    uint64_t getRemoteAddress(size_t bias = 0) const {
-        return remote_mem_info.addr + bias;
-    }
+    uint64_t getRemoteAddress(size_t bias = 0) const;
 
     // 获取本地内存地址
-    void* getLocalAddress(size_t bias = 0) const {
-        return static_cast<char*>(buffer) + bias;
-    }
+    void* getLocalAddress(size_t bias = 0) const;
     
     // 获取worker - 新增方法
     ucp_worker_h getWorker() const;
@@ -139,16 +127,24 @@ private:
     bool mem_registered;         // 内存是否已注册
     bool rkey_exchanged;         // 是否已交换密钥
 
+    // 异步请求管理 - 新增
+    std::vector<ucs_status_ptr_t> pending_requests;  // 挂起的异步请求列表
+    std::mutex requests_mutex;                       // 保护请求列表的互斥锁
+
     // 等待请求完成
     bool waitRequest(ucs_status_ptr_t req, int timeout_ms = 1000);
     // 等待Worker进度
     void progressWorker(int timeout_ms = 1000);
+    // 等待所有挂起请求完成 - 新增
+    status_t waitAllPendingRequests(int timeout_ms = 5000);
 };
 
-// UCX服务器类
+// UCX服务器类 - 修改：增加buffer成员
 class UCXServer : public Server {
 public:
-    UCXServer(std::shared_ptr<ConnManager> conn_manager);
+    // 修改：构造函数同时接收conn_manager和buffer
+    UCXServer(std::shared_ptr<ConnManager> conn_manager, 
+              std::shared_ptr<ConnBuffer> buffer);
     ~UCXServer();
 
     status_t listen(std::string ip, uint16_t port) override;
@@ -158,6 +154,9 @@ public:
     ucp_worker_h getWorker() { return worker; }
     ucp_context_h getContext() { return context; }
     ucp_listener_h getListener() { return listener; }
+    
+    // 新增：获取buffer的方法
+    std::shared_ptr<ConnBuffer> getBuffer() { return buffer; }
 
     // 使conn_manager在ucx_conn_handler中可访问
     friend void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg);
@@ -168,6 +167,9 @@ private:
     ucp_listener_h listener;
     std::atomic<bool> running;
     std::thread worker_thread;
+    
+    // 新增：直接持有buffer，与Client保持一致
+    std::shared_ptr<ConnBuffer> buffer;
 
     void progressThread();
     void configureUCX(ucp_config_t* config, const std::string& bind_ip);

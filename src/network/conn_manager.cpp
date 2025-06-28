@@ -18,7 +18,8 @@ createServer(ConnType serverType, std::shared_ptr<ConnBuffer> buffer,
     return std::make_unique<RDMAServer>(buffer, conn_manager);
   case ConnType::UCX:
 #ifdef ENABLE_UCX
-    return std::make_unique<UCXServer>(conn_manager);
+    // 修改：同时传递conn_manager和buffer给UCXServer
+    return std::make_unique<UCXServer>(conn_manager, buffer);
 #else
     logError("UCX support not compiled in");
     return nullptr;

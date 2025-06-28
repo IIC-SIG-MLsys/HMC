@@ -27,7 +27,8 @@ ucp_worker_h UCXEndpoint::getWorker() const {
     return worker;
 }
 
-status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
+// 真正的非阻塞接口 - 只发起操作，不等待完成
+status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size) {
     if (data_bias + size > buffer_size) {
         logError("UCXEndpoint: Invalid data bias and size");
         return status_t::ERROR;
@@ -53,13 +54,13 @@ status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
         return status_t::ERROR;
     }
 
-    logDebug("UCXEndpoint: Writing data of size %zu at bias %zu", size, data_bias);
+    logDebug("UCXEndpoint: Starting non-blocking write of size %zu at bias %zu", size, data_bias);
     
     // 获取本地和远程地址
     void* src_addr = getLocalAddress(data_bias);
     uint64_t dst_addr = getRemoteAddress(data_bias);
     
-    // 使用PUT操作写入数据
+    // 使用PUT操作写入数据（非阻塞）
     ucs_status_ptr_t req = ucp_put_nb(ep, src_addr, size, dst_addr, remote_rkey, 
                                     (ucp_send_callback_t)ucx_send_cb);
                                      
@@ -69,34 +70,21 @@ status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
         return status_t::ERROR;
     }
     
+    // 如果操作没有立即完成，保存请求句柄供后续poll使用
     if (UCS_PTR_IS_PTR(req)) {
-        // 等待请求完成
-        if (!waitRequest(req, 5000)) {  // 增加超时时间到5秒
-            logError("UCXEndpoint: Request wait failed for PUT operation");
-            return status_t::ERROR;
-        }
+        std::lock_guard<std::mutex> lock(requests_mutex);
+        pending_requests.push_back(req);
+        logDebug("UCXEndpoint: Added write request to pending list, total pending: %zu", 
+                pending_requests.size());
+    } else {
+        // UCS_OK - 操作立即完成
+        logDebug("UCXEndpoint: Write operation completed immediately");
     }
     
-    // 刷新worker以确保操作完成
-    ucs_status_ptr_t flush_req = ucp_worker_flush_nb(worker, 0, ucx_send_cb);
-    if (UCS_PTR_IS_ERR(flush_req)) {
-        logError("UCXEndpoint: Failed to flush worker: %s", 
-                ucs_status_string(UCS_PTR_STATUS(flush_req)));
-        return status_t::ERROR;
-    }
-    
-    if (UCS_PTR_IS_PTR(flush_req)) {
-        if (!waitRequest(flush_req, 5000)) {
-            logError("UCXEndpoint: Request wait failed for FLUSH operation");
-            return status_t::ERROR;
-        }
-    }
-    
-    logInfo("UCXEndpoint: PUT operation completed successfully");
     return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
+status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size) {
     if (data_bias + size > buffer_size) {
         logError("UCXEndpoint: Invalid data bias and size");
         return status_t::ERROR;
@@ -115,13 +103,13 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
         }
     }
 
-    logDebug("UCXEndpoint: Reading data of size %zu at bias %zu", size, data_bias);
+    logDebug("UCXEndpoint: Starting non-blocking read of size %zu at bias %zu", size, data_bias);
 
     // 获取本地和远程地址
     void* dst_addr = getLocalAddress(data_bias);
     uint64_t src_addr = getRemoteAddress(data_bias);
 
-    // 使用GET操作读取数据
+    // 使用GET操作读取数据（非阻塞）
     ucs_status_ptr_t req = ucp_get_nb(ep, dst_addr, size, src_addr, remote_rkey, 
                                     (ucp_send_callback_t)ucx_send_cb);
                                     
@@ -131,30 +119,97 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
         return status_t::ERROR;
     }
 
+    // 如果操作没有立即完成，保存请求句柄供后续poll使用
     if (UCS_PTR_IS_PTR(req)) {
-        // 等待请求完成
-        if (!waitRequest(req, 5000)) {
-            logError("UCXEndpoint: Request wait failed for GET operation");
-            return status_t::ERROR;
-        }
-    }
-
-    // 刷新worker以确保操作完成
-    ucs_status_ptr_t flush_req = ucp_worker_flush_nb(worker, 0, ucx_send_cb);
-    if (UCS_PTR_IS_ERR(flush_req)) {
-        logError("UCXEndpoint: Failed to flush worker: %s", 
-                ucs_status_string(UCS_PTR_STATUS(flush_req)));
-        return status_t::ERROR;
-    }
-
-    if (UCS_PTR_IS_PTR(flush_req)) {
-        if (!waitRequest(flush_req, 5000)) {
-            logError("UCXEndpoint: Request wait failed for FLUSH operation");
-            return status_t::ERROR;
-        }
+        std::lock_guard<std::mutex> lock(requests_mutex);
+        pending_requests.push_back(req);
+        logDebug("UCXEndpoint: Added read request to pending list, total pending: %zu", 
+                pending_requests.size());
+    } else {
+        // UCS_OK - 操作立即完成
+        logDebug("UCXEndpoint: Read operation completed immediately");
     }
 
     return status_t::SUCCESS;
+}
+
+// 轮询完成 - 处理指定数量的完成事件
+status_t UCXEndpoint::pollCompletion(int num_completions_to_process) {
+    std::lock_guard<std::mutex> lock(requests_mutex);
+    
+    int completed = 0;
+    auto it = pending_requests.begin();
+    
+    while (it != pending_requests.end() && completed < num_completions_to_process) {
+        ucs_status_ptr_t req = *it;
+        
+        // 推进worker进度
+        ucp_worker_progress(worker);
+        
+        // 检查请求是否完成
+        if (ucp_request_is_completed(req)) {
+            // 检查请求状态
+            ucs_status_t status = ucp_request_check_status(req);
+            if (status != UCS_OK) {
+                logError("UCXEndpoint: Request completed with error: %s", 
+                        ucs_status_string(status));
+                ucp_request_free(req);
+                it = pending_requests.erase(it);
+                return status_t::ERROR;
+            }
+            
+            logDebug("UCXEndpoint: Request completed successfully");
+            
+            // 释放请求并从列表中移除
+            ucp_request_free(req);
+            it = pending_requests.erase(it);
+            completed++;
+        } else {
+            ++it;
+        }
+    }
+    
+    logDebug("UCXEndpoint: Polled %d completions, %zu requests still pending", 
+            completed, pending_requests.size());
+    
+    return status_t::SUCCESS;
+}
+
+// 阻塞接口 - 基于非阻塞接口实现
+status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
+    logDebug("UCXEndpoint: Starting blocking write of size %zu at bias %zu", size, data_bias);
+    
+    // 发起非阻塞操作
+    status_t ret = writeDataNB(data_bias, size);
+    if (ret != status_t::SUCCESS) {
+        return ret;
+    }
+    
+    // 等待所有挂起的请求完成
+    ret = waitAllPendingRequests(5000);  // 5秒超时
+    if (ret == status_t::SUCCESS) {
+        logInfo("UCXEndpoint: Blocking write operation completed successfully");
+    }
+    
+    return ret;
+}
+
+status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
+    logDebug("UCXEndpoint: Starting blocking read of size %zu at bias %zu", size, data_bias);
+    
+    // 发起非阻塞操作
+    status_t ret = readDataNB(data_bias, size);
+    if (ret != status_t::SUCCESS) {
+        return ret;
+    }
+    
+    // 等待所有挂起的请求完成
+    ret = waitAllPendingRequests(5000);  // 5秒超时
+    if (ret == status_t::SUCCESS) {
+        logInfo("UCXEndpoint: Blocking read operation completed successfully");
+    }
+    
+    return ret;
 }
 
 status_t UCXEndpoint::closeEndpoint() {
@@ -164,6 +219,21 @@ status_t UCXEndpoint::closeEndpoint() {
     }
 
     logInfo("UCXEndpoint: Closing endpoint");
+
+    // 等待所有挂起的请求完成
+    waitAllPendingRequests(3000);  // 3秒超时
+    
+    // 清理挂起的请求
+    {
+        std::lock_guard<std::mutex> lock(requests_mutex);
+        for (auto req : pending_requests) {
+            if (UCS_PTR_IS_PTR(req)) {
+                ucp_request_cancel(worker, req);
+                ucp_request_free(req);
+            }
+        }
+        pending_requests.clear();
+    }
 
     // 取消注册内存
     unregisterMemory();
@@ -398,6 +468,48 @@ status_t UCXEndpoint::exchangeMemoryInfo() {
     logInfo("UCXEndpoint: Memory info exchange completed successfully");
     
     return status_t::SUCCESS;
+}
+
+uint64_t UCXEndpoint::getRemoteAddress(size_t bias) const {
+    return remote_mem_info.addr + bias;
+}
+
+void* UCXEndpoint::getLocalAddress(size_t bias) const {
+    return static_cast<char*>(buffer) + bias;
+}
+
+// 等待所有挂起请求完成的辅助函数
+status_t UCXEndpoint::waitAllPendingRequests(int timeout_ms) {
+    auto start_time = std::chrono::steady_clock::now();
+    
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(requests_mutex);
+            if (pending_requests.empty()) {
+                logDebug("UCXEndpoint: All pending requests completed");
+                return status_t::SUCCESS;  // 所有请求都完成了
+            }
+            logDebug("UCXEndpoint: Still have %zu pending requests", pending_requests.size());
+        }
+        
+        // 检查超时
+        auto now = std::chrono::steady_clock::now();
+        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(now - start_time);
+        if (elapsed.count() >= timeout_ms) {
+            logError("UCXEndpoint: Wait for requests timed out after %d ms", timeout_ms);
+            return status_t::ERROR;
+        }
+        
+        // 尝试处理完成的请求
+        status_t poll_ret = pollCompletion(10);  // 每次处理最多10个完成的请求
+        if (poll_ret != status_t::SUCCESS) {
+            logError("UCXEndpoint: Error occurred while polling completions");
+            return poll_ret;
+        }
+        
+        // 短暂休眠，减少CPU占用
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
 }
 
 bool UCXEndpoint::waitRequest(ucs_status_ptr_t req, int timeout_ms) {

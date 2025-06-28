@@ -84,9 +84,12 @@ void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg) {
     
     logInfo("UCX connection handler: Endpoint created successfully");
     
-    // 获取通信器(ConnManager)
-    auto conn_manager = server->conn_manager;
-    auto buffer = conn_manager->getBuffer();
+    // 修改：直接从server获取buffer，保持一致性
+    auto buffer = server->getBuffer();
+    if (!buffer) {
+        logError("UCX connection handler: Failed to get buffer from server");
+        return;
+    }
     
     logInfo("UCX connection handler: Server buffer: %p, size: %zu", 
            buffer->ptr, buffer->buffer_size);
@@ -108,6 +111,7 @@ void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg) {
     UCXEndpoint* ep_ptr = endpoint.get();
     
     // 将端点添加到连接管理器，使用客户端IP作为键
+    auto conn_manager = server->conn_manager;
     conn_manager->_addEndpoint(client_ip, std::move(endpoint));
     
     logInfo("UCX connection handler: Added new endpoint for client %s", client_ip.c_str());
@@ -163,9 +167,11 @@ bool isPortAvailable(uint16_t port) {
     return result == 0;
 }
 
-UCXServer::UCXServer(std::shared_ptr<ConnManager> conn_manager) 
+// 修改：构造函数同时接收conn_manager和buffer
+UCXServer::UCXServer(std::shared_ptr<ConnManager> conn_manager, 
+                     std::shared_ptr<ConnBuffer> buffer) 
     : Server(conn_manager), context(nullptr), worker(nullptr), 
-      listener(nullptr), running(false) {
+      listener(nullptr), running(false), buffer(buffer) {
     logInfo("UCXServer created");
 }
 
@@ -202,7 +208,7 @@ void UCXServer::configureUCX(ucp_config_t* config, const std::string& bind_ip) {
     // 根据日志，服务器有 ens61f0np0 和 ens61f1np1
     ucp_config_modify(config, "NET_DEVICES", "ens61f0np0,ens61f1np1");
     
-    // logInfo("UCXServer: UCX configuration completed - forced physical interfaces");
+    logInfo("UCXServer: UCX configuration completed - forced physical interfaces");
 }
 
 status_t UCXServer::listen(std::string ip, uint16_t port) {
