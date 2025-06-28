@@ -27,42 +27,6 @@ ucp_worker_h UCXEndpoint::getWorker() const {
     return worker;
 }
 
-status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
-    logDebug("UCXEndpoint: Starting blocking write of size %zu at bias %zu", size, data_bias);
-    
-    // 发起非阻塞操作
-    status_t ret = writeDataNB(data_bias, size);
-    if (ret != status_t::SUCCESS) {
-        return ret;
-    }
-    
-    // 等待所有挂起的请求完成
-    ret = waitAllPendingRequests();
-    if (ret == status_t::SUCCESS) {
-        logInfo("UCXEndpoint: Blocking write operation completed successfully");
-    }
-    
-    return ret;
-}
-
-status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
-    logDebug("UCXEndpoint: Starting blocking read of size %zu at bias %zu", size, data_bias);
-    
-    // 发起非阻塞操作
-    status_t ret = readDataNB(data_bias, size);
-    if (ret != status_t::SUCCESS) {
-        return ret;
-    }
-    
-    // 等待所有挂起的请求完成
-    ret = waitAllPendingRequests();
-    if (ret == status_t::SUCCESS) {
-        logInfo("UCXEndpoint: Blocking read operation completed successfully");
-    }
-    
-    return ret;
-}
-
 // UCX标签化接收 - 真正的recvData实现
 status_t UCXEndpoint::recvData(size_t data_bias, size_t size) {
     logDebug("UCXEndpoint: Starting blocking receive of size %zu at bias %zu", size, data_bias);
@@ -275,6 +239,43 @@ status_t UCXEndpoint::pollCompletion(int num_completions_to_process) {
     return status_t::SUCCESS;
 }
 
+// 阻塞接口 - 基于非阻塞接口实现
+status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
+    logDebug("UCXEndpoint: Starting blocking write of size %zu at bias %zu", size, data_bias);
+    
+    // 发起非阻塞操作
+    status_t ret = writeDataNB(data_bias, size);
+    if (ret != status_t::SUCCESS) {
+        return ret;
+    }
+    
+    // 等待所有挂起的请求完成
+    ret = waitAllPendingRequests();
+    if (ret == status_t::SUCCESS) {
+        logInfo("UCXEndpoint: Blocking write operation completed successfully");
+    }
+    
+    return ret;
+}
+
+status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
+    logDebug("UCXEndpoint: Starting blocking read of size %zu at bias %zu", size, data_bias);
+    
+    // 发起非阻塞操作
+    status_t ret = readDataNB(data_bias, size);
+    if (ret != status_t::SUCCESS) {
+        return ret;
+    }
+    
+    // 等待所有挂起的请求完成
+    ret = waitAllPendingRequests();
+    if (ret == status_t::SUCCESS) {
+        logInfo("UCXEndpoint: Blocking read operation completed successfully");
+    }
+    
+    return ret;
+}
+
 status_t UCXEndpoint::closeEndpoint() {
     if (!is_connected.exchange(false)) {
         // 已经关闭
@@ -282,6 +283,21 @@ status_t UCXEndpoint::closeEndpoint() {
     }
 
     logInfo("UCXEndpoint: Closing endpoint");
+
+    // 等待所有挂起的请求完成
+    waitAllPendingRequests();
+    
+    // 清理挂起的请求
+    {
+        std::lock_guard<std::mutex> lock(requests_mutex);
+        for (auto req : pending_requests) {
+            if (UCS_PTR_IS_PTR(req)) {
+                ucp_request_cancel(worker, req);
+                ucp_request_free(req);
+            }
+        }
+        pending_requests.clear();
+    }
 
     // 取消注册内存
     unregisterMemory();
@@ -516,6 +532,14 @@ status_t UCXEndpoint::exchangeMemoryInfo() {
     logInfo("UCXEndpoint: Memory info exchange completed successfully");
     
     return status_t::SUCCESS;
+}
+
+uint64_t UCXEndpoint::getRemoteAddress(size_t bias) const {
+    return remote_mem_info.addr + bias;
+}
+
+void* UCXEndpoint::getLocalAddress(size_t bias) const {
+    return static_cast<char*>(buffer) + bias;
 }
 
 bool UCXEndpoint::waitRequest(ucs_status_ptr_t req, int timeout_ms) {

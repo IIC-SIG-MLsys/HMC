@@ -105,14 +105,10 @@ public:
     status_t exchangeMemoryInfo();
 
     // 获取远程内存地址
-    uint64_t getRemoteAddress(size_t bias = 0) const {
-        return remote_mem_info.addr + bias;
-    }
+    uint64_t getRemoteAddress(size_t bias = 0) const;
 
     // 获取本地内存地址
-    void* getLocalAddress(size_t bias = 0) const {
-        return static_cast<char*>(buffer) + bias;
-    }
+    void* getLocalAddress(size_t bias = 0) const;
     
     // 获取worker - 新增方法
     ucp_worker_h getWorker() const;
@@ -145,10 +141,12 @@ private:
     void progressWorker(int timeout_ms = 1000);
 };
 
-// UCX服务器类
+// UCX服务器类 - 修改：增加buffer成员
 class UCXServer : public Server {
 public:
-    UCXServer(std::shared_ptr<ConnManager> conn_manager);
+    // 修改：构造函数同时接收conn_manager和buffer
+    UCXServer(std::shared_ptr<ConnManager> conn_manager, 
+              std::shared_ptr<ConnBuffer> buffer);
     ~UCXServer();
 
     status_t listen(std::string ip, uint16_t port) override;
@@ -158,6 +156,9 @@ public:
     ucp_worker_h getWorker() { return worker; }
     ucp_context_h getContext() { return context; }
     ucp_listener_h getListener() { return listener; }
+    
+    // 新增：获取buffer的方法
+    std::shared_ptr<ConnBuffer> getBuffer() { return buffer; }
 
     // 使conn_manager在ucx_conn_handler中可访问
     friend void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg);
@@ -168,6 +169,9 @@ private:
     ucp_listener_h listener;
     std::atomic<bool> running;
     std::thread worker_thread;
+    
+    // 新增：直接持有buffer，与Client保持一致
+    std::shared_ptr<ConnBuffer> buffer;
 
     void progressThread();
     void configureUCX(ucp_config_t* config, const std::string& bind_ip);
