@@ -44,12 +44,15 @@ void ucx_error_handler(void *arg, ucp_ep_h ep, ucs_status_t status) {
 void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg) {
     auto *server = static_cast<UCXServer*>(arg);
     
+    logInfo("===============================================");
+    logInfo("UCX SERVER: NEW CONNECTION REQUEST RECEIVED!");
+    logInfo("===============================================");
+    
     if (!server) {
         logError("UCX connection handler called with null server");
+        ucp_listener_reject(server->getListener(), conn_request);
         return;
     }
-    
-    logInfo("UCX connection handler: New connection request received");
     
     // 获取客户端地址信息
     ucp_conn_request_attr_t attr;
@@ -62,36 +65,43 @@ void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg) {
         char ip_str[INET_ADDRSTRLEN];
         if (inet_ntop(AF_INET, &addr_in->sin_addr, ip_str, INET_ADDRSTRLEN)) {
             client_ip = std::string(ip_str);
-            logInfo("UCX connection handler: Client IP: %s", client_ip.c_str());
+            logInfo("UCX SERVER: Client connecting from IP: %s", client_ip.c_str());
         }
+    } else {
+        logInfo("UCX SERVER: Failed to query client address, status: %s", 
+                  ucs_status_string(query_status));
     }
     
-    // 创建端点参数 - 移除错误处理器以避免崩溃
+    // 创建端点参数
     ucp_ep_params_t ep_params;
     memset(&ep_params, 0, sizeof(ep_params));
     ep_params.field_mask = UCP_EP_PARAM_FIELD_CONN_REQUEST;
     ep_params.conn_request = conn_request;
+    
+    logInfo("UCX SERVER: Creating endpoint for client %s", client_ip.c_str());
     
     // 创建端点
     ucp_ep_h client_ep = nullptr;
     ucs_status_t status = ucp_ep_create(server->getWorker(), &ep_params, &client_ep);
     
     if (status != UCS_OK) {
-        logError("UCX connection handler: Failed to create endpoint: %s", 
+        logError("UCX SERVER: Failed to create endpoint: %s", 
                 ucs_status_string(status));
+        ucp_listener_reject(server->getListener(), conn_request);
         return;
     }
     
-    logInfo("UCX connection handler: Endpoint created successfully");
+    logInfo("UCX SERVER: Endpoint created successfully for client %s", client_ip.c_str());
     
-    // 修改：直接从server获取buffer，保持一致性
+    // 获取buffer
     auto buffer = server->getBuffer();
     if (!buffer) {
-        logError("UCX connection handler: Failed to get buffer from server");
+        logError("UCX SERVER: Failed to get buffer from server");
+        ucp_ep_destroy(client_ep);
         return;
     }
     
-    logInfo("UCX connection handler: Server buffer: %p, size: %zu", 
+    logInfo("UCX SERVER: Using server buffer: %p, size: %zu", 
            buffer->ptr, buffer->buffer_size);
     
     // 创建端点对象
@@ -101,53 +111,107 @@ void ucx_conn_handler(ucp_conn_request_h conn_request, void *arg) {
     
     endpoint->role = EndpointType::Server;
     
-    // 确保内存正确注册
+    logInfo("UCX SERVER: UCXEndpoint object created for client %s", client_ip.c_str());
+    
+    // 注册内存
     if (endpoint->registerMemory() != status_t::SUCCESS) {
-        logError("UCX connection handler: Failed to register memory");
+        logError("UCX SERVER: Failed to register memory for client %s", client_ip.c_str());
         return;
     }
     
-    // 保存端点的指针，以便在添加到连接管理器后仍能访问
+    logInfo("UCX SERVER: Memory registered for client %s", client_ip.c_str());
+    
+    // 保存端点指针
     UCXEndpoint* ep_ptr = endpoint.get();
     
-    // 将端点添加到连接管理器，使用客户端IP作为键
+    // 将端点添加到连接管理器
     auto conn_manager = server->conn_manager;
     conn_manager->_addEndpoint(client_ip, std::move(endpoint));
     
-    logInfo("UCX connection handler: Added new endpoint for client %s", client_ip.c_str());
+    logInfo("UCX SERVER: Added new endpoint for client %s", client_ip.c_str());
     
-    // 启动内存信息交换 - 延迟更长时间
-    std::thread exchange_thread([ep_ptr, client_ip]() {
-        // 等待连接完全稳定
-        std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    // 启动后台任务处理连接测试和内存交换
+    std::thread connection_handler([ep_ptr, client_ip, server]() {
+        logInfo("UCX SERVER: Starting connection handler thread for client %s", client_ip.c_str());
         
-        logInfo("UCX server: Starting memory info exchange with %s", client_ip.c_str());
+        // 1. 等待并处理连接测试消息
+        char test_buffer[16];
+        ucp_tag_t tag_mask = ~0ULL;
         
-        // 主动交换内存信息，减少重试次数避免长时间阻塞
-        int max_retries = 2;
+        logInfo("UCX SERVER: Waiting for connection test message from %s", client_ip.c_str());
+        
+        ucs_status_ptr_t recv_req = ucp_tag_recv_nb(server->getWorker(), test_buffer, sizeof(test_buffer),
+                                                 ucp_dt_make_contig(1),
+                                                 UCX_TAG_CONNECTION_TEST, tag_mask,
+                                                 ucx_recv_cb);
+        
+        if (UCS_PTR_IS_ERR(recv_req)) {
+            logError("UCX SERVER: Failed to post test message receive: %s", 
+                    ucs_status_string(UCS_PTR_STATUS(recv_req)));
+        } else {
+            // 等待接收完成
+            bool test_received = false;
+            if (UCS_PTR_IS_PTR(recv_req)) {
+                auto *ctx = static_cast<ucx_request*>(recv_req);
+                if (ctx->wait(10000)) {  // 10秒超时
+                    test_received = true;
+                    logInfo("UCX SERVER: Received connection test message from %s: %s", 
+                           client_ip.c_str(), test_buffer);
+                } else {
+                    logError("UCX SERVER: Connection test message timeout from %s", client_ip.c_str());
+                }
+                ucp_request_free(recv_req);
+            } else {
+                // 立即完成
+                test_received = true;
+                logInfo("UCX SERVER: Received connection test message from %s (immediate): %s", 
+                       client_ip.c_str(), test_buffer);
+            }
+            
+            if (!test_received) {
+                logError("UCX SERVER: Failed to receive connection test from %s", client_ip.c_str());
+                return;
+            }
+        }
+        
+        // 2. 等待连接稳定
+        std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+        
+        // 3. 进行内存信息交换
+        logInfo("UCX SERVER: Starting memory info exchange with %s", client_ip.c_str());
+        
+        int max_retries = 3;
         for (int retry = 0; retry < max_retries; retry++) {
+            logInfo("UCX SERVER: Memory exchange attempt %d/%d with client %s", 
+                   retry + 1, max_retries, client_ip.c_str());
+                   
             if (ep_ptr->exchangeMemoryInfo() == status_t::SUCCESS) {
-                logInfo("UCX server: Successfully exchanged memory info with client %s", client_ip.c_str());
+                logInfo("UCX SERVER: Successfully exchanged memory info with client %s", client_ip.c_str());
+                logInfo("===============================================");
+                logInfo("UCX SERVER: CONNECTION SETUP COMPLETED FOR %s", client_ip.c_str());
+                logInfo("===============================================");
                 return;
             }
             
             if (retry < max_retries - 1) {
-                logError("UCX server: Memory info exchange failed with %s, retrying in 2 seconds...", client_ip.c_str());
+                logError("UCX SERVER: Memory info exchange failed with %s, retrying in 2 seconds...", client_ip.c_str());
                 std::this_thread::sleep_for(std::chrono::seconds(2));
             }
         }
         
-        logError("UCX server: Failed to exchange memory info with client %s after %d retries", 
+        logError("UCX SERVER: Failed to exchange memory info with client %s after %d retries", 
                 client_ip.c_str(), max_retries);
     });
     
-    // 分离线程，让它在后台运行
-    exchange_thread.detach();
+    // 分离线程
+    connection_handler.detach();
+    
+    logInfo("UCX SERVER: Connection handler started for %s", client_ip.c_str());
 }
 
 // 检查端口是否可用
 bool isPortAvailable(uint16_t port) {
-    if (port == 0) return true;  // 动态端口总是可用的
+    if (port == 0) return true;
     
     int sockfd = socket(AF_INET, SOCK_STREAM, 0);
     if (sockfd < 0) return false;
@@ -167,52 +231,74 @@ bool isPortAvailable(uint16_t port) {
     return result == 0;
 }
 
-// 修改：构造函数同时接收conn_manager和buffer
 UCXServer::UCXServer(std::shared_ptr<ConnManager> conn_manager, 
                      std::shared_ptr<ConnBuffer> buffer) 
     : Server(conn_manager), context(nullptr), worker(nullptr), 
       listener(nullptr), running(false), buffer(buffer) {
-    logInfo("UCXServer created");
+    logInfo("UCXServer created with buffer %p, size %zu", buffer->ptr, buffer->buffer_size);
 }
 
 UCXServer::~UCXServer() {
+    logInfo("UCXServer: Starting cleanup...");
+    
     // 停止进度线程
     running.store(false);
     if (worker_thread.joinable()) {
         worker_thread.join();
+        logInfo("UCXServer: Progress thread stopped");
     }
     
     // 清理资源
     if (listener) {
         ucp_listener_destroy(listener);
+        logInfo("UCXServer: Listener destroyed");
     }
     
     if (worker) {
         ucp_worker_destroy(worker);
+        logInfo("UCXServer: Worker destroyed");
     }
     
     if (context) {
         ucp_cleanup(context);
+        logInfo("UCXServer: Context cleaned up");
     }
     
     logInfo("UCXServer destroyed");
 }
 
 void UCXServer::configureUCX(ucp_config_t* config, const std::string& bind_ip) {
+    logInfo("UCXServer: Configuring UCX for bind IP %s", bind_ip.c_str());
+    
     // 基础TCP配置
     ucp_config_modify(config, "TLS", "tcp");
     ucp_config_modify(config, "WARN_UNUSED_ENV_VARS", "n");
     ucp_config_modify(config, "TCP_CM_REUSEADDR", "y");
     
-    // 强制排除虚拟网络接口，只使用物理网卡
-    // 根据日志，服务器有 ens61f0np0 和 ens61f1np1
-    ucp_config_modify(config, "NET_DEVICES", "ens61f0np0,ens61f1np1");
+    // 网络接口配置 - 修复：让UCX自动选择
+    const char* env_interfaces = getenv("UCX_NET_DEVICES");
+    if (env_interfaces && strlen(env_interfaces) > 0) {
+        ucp_config_modify(config, "NET_DEVICES", env_interfaces);
+        logInfo("UCXServer: Using network interfaces from environment: %s", env_interfaces);
+    } else {
+        // 不设置NET_DEVICES，让UCX自动选择最佳接口
+        logInfo("UCXServer: Using UCX automatic interface selection");
+    }
     
-    logInfo("UCXServer: UCX configuration completed - forced physical interfaces");
+    // 添加调试和稳定性配置
+    ucp_config_modify(config, "LOG_LEVEL", "info");
+    ucp_config_modify(config, "SOCKADDR_TLS_PRIORITY", "tcp");
+    ucp_config_modify(config, "TCP_KEEPIDLE", "600");
+    ucp_config_modify(config, "TCP_KEEPINTVL", "60");
+    ucp_config_modify(config, "TCP_KEEPCNT", "5");
+    
+    logInfo("UCXServer: UCX configuration completed for bind IP %s", bind_ip.c_str());
 }
 
 status_t UCXServer::listen(std::string ip, uint16_t port) {
-    logInfo("UCXServer: Starting to listen on %s:%d", ip.c_str(), port);
+    logInfo("===============================================");
+    logInfo("UCXServer: STARTING TO LISTEN ON %s:%d", ip.c_str(), port);
+    logInfo("===============================================");
     
     // 初始化UCP
     ucp_config_t *config = nullptr;
@@ -244,6 +330,7 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
     }
     
     ucp_config_release(config);
+    logInfo("UCXServer: UCP context initialized");
     
     // 创建worker
     ucp_worker_params_t worker_params;
@@ -258,6 +345,8 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
         return status_t::ERROR;
     }
     
+    logInfo("UCXServer: Worker created");
+    
     // 设置监听地址
     struct sockaddr_in listen_addr;
     memset(&listen_addr, 0, sizeof(listen_addr));
@@ -266,11 +355,14 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
     
     if (ip == "0.0.0.0") {
         listen_addr.sin_addr.s_addr = INADDR_ANY;
+        logInfo("UCXServer: Binding to all interfaces (0.0.0.0)");
     } else if (inet_pton(AF_INET, ip.c_str(), &listen_addr.sin_addr) <= 0) {
         logError("UCXServer: Invalid IP address: %s", ip.c_str());
         ucp_worker_destroy(worker);
         ucp_cleanup(context);
         return status_t::ERROR;
+    } else {
+        logInfo("UCXServer: Binding to specific interface: %s", ip.c_str());
     }
     
     // 创建监听参数
@@ -283,6 +375,8 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
     listener_params.conn_handler.cb = ucx_conn_handler;
     listener_params.conn_handler.arg = this;
     
+    logInfo("UCXServer: Creating listener with connection handler...");
+    
     // 尝试监听
     ucs_status_t status = ucp_listener_create(worker, &listener_params, &listener);
     if (status != UCS_OK) {
@@ -293,26 +387,23 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
         return status_t::ERROR;
     }
     
-    // 写入端口发现文件，便于客户端连接
-    std::ofstream port_file("/tmp/ucx_server_port.txt");
-    if (port_file.is_open()) {
-        port_file << port;
-        port_file.close();
-        logInfo("UCXServer: Port info written to /tmp/ucx_server_port.txt");
-    }
+    logInfo("UCXServer: Listener created successfully");
+    
+    logInfo("===============================================");
+    logInfo("UCXServer: READY TO ACCEPT CONNECTIONS ON %s:%d", ip.c_str(), port);
+    logInfo("===============================================");
     
     // 启动进度线程
     running.store(true);
     worker_thread = std::thread(&UCXServer::progressThread, this);
     
-    logInfo("UCXServer: Successfully started listening on %s:%d", ip.c_str(), port);
     return status_t::SUCCESS;
 }
 
 status_t UCXServer::stopListen() {
     logInfo("UCXServer: Stopping listener");
     
-    // 停止运行标志，让进度线程退出
+    // 停止运行标志
     running.store(false);
     
     // 等待进度线程结束
@@ -331,18 +422,26 @@ status_t UCXServer::stopListen() {
 }
 
 void UCXServer::progressThread() {
-    logInfo("UCXServer: Progress thread started");
+    logInfo("UCXServer: Progress thread started, running worker progress loop...");
+    
+    int progress_counter = 0;
     
     // 进度线程主循环
     while (running.load()) {
         // 推进UCX工作进度
         ucp_worker_progress(worker);
+        progress_counter++;
+        
+        // 每30秒输出一次活跃状态（减少日志频率）
+        if (progress_counter % 30000 == 0) {
+            logInfo("UCXServer: Progress thread active, processed %d cycles", progress_counter);
+        }
         
         // 适当休眠，减少CPU占用
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
     
-    logInfo("UCXServer: Progress thread stopped");
+    logInfo("UCXServer: Progress thread stopped after %d cycles", progress_counter);
 }
 
 } // namespace hmc

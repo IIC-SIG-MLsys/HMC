@@ -12,7 +12,6 @@
 #include <netdb.h>
 #include <unistd.h>
 #include <iomanip>
-#include <fstream>
 #include <cstdlib>
 
 using namespace hmc;
@@ -82,18 +81,6 @@ std::vector<NetworkInterface> getNetworkInterfaces() {
 
     freeifaddrs(ifaddr);
     return interfaces;
-}
-
-// 写入端口发现文件
-void writePortDiscoveryFile(uint16_t port) {
-    std::ofstream port_file("/tmp/ucx_server_port.txt");
-    if (port_file.is_open()) {
-        port_file << port;
-        port_file.close();
-        std::cout << "服务器端口 " << port << " 已写入文件 /tmp/ucx_server_port.txt" << std::endl;
-    } else {
-        std::cerr << "无法写入端口发现文件" << std::endl;
-    }
 }
 
 // 辅助函数：以十六进制格式打印数据
@@ -191,9 +178,6 @@ int main(int argc, char* argv[]) {
         return 1;
     }
 
-    // 写入端口发现文件
-    writePortDiscoveryFile(DEFAULT_PORT);
-
     std::cout << "\n服务器正在监听 (绑定地址: " << bind_ip << ":" << DEFAULT_PORT << ")" << std::endl;
     if (bind_ip == "0.0.0.0") {
         std::cout << "客户端可通过以下任一IP连接:" << std::endl;
@@ -203,7 +187,6 @@ int main(int argc, char* argv[]) {
             }
         }
     }
-    std::cout << "端口已写入: /tmp/ucx_server_port.txt" << std::endl;
     std::cout << "按 Ctrl+C 退出" << std::endl;
 
     // 主服务器循环

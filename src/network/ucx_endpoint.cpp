@@ -249,7 +249,7 @@ status_t UCXEndpoint::writeData(size_t data_bias, size_t size) {
         return ret;
     }
     
-    // 等待所有挂起的请求完成
+    // 等待所有挂起的请求完成（移除超时限制）
     ret = waitAllPendingRequests();
     if (ret == status_t::SUCCESS) {
         logInfo("UCXEndpoint: Blocking write operation completed successfully");
@@ -267,7 +267,7 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
         return ret;
     }
     
-    // 等待所有挂起的请求完成
+    // 等待所有挂起的请求完成（移除超时限制）
     ret = waitAllPendingRequests();
     if (ret == status_t::SUCCESS) {
         logInfo("UCXEndpoint: Blocking read operation completed successfully");
@@ -284,7 +284,7 @@ status_t UCXEndpoint::closeEndpoint() {
 
     logInfo("UCXEndpoint: Closing endpoint");
 
-    // 等待所有挂起的请求完成
+    // 等待所有挂起的请求完成（移除超时限制）
     waitAllPendingRequests();
     
     // 清理挂起的请求
@@ -316,7 +316,7 @@ status_t UCXEndpoint::closeEndpoint() {
         while (!UCS_PTR_IS_ERR(req) && !ucp_request_is_completed(req)) {
             ucp_worker_progress(worker);
             
-            // 超时检查
+            // 超时检查 - 这里保留超时机制，因为这是关闭操作，不应无限等待
             if (std::chrono::duration_cast<std::chrono::milliseconds>(
                     std::chrono::steady_clock::now() - start_time).count() > 3000) {
                 logError("UCXEndpoint: Close operation timed out");
@@ -460,7 +460,7 @@ status_t UCXEndpoint::exchangeMemoryInfo() {
         return status_t::ERROR;
     }
     
-    // 等待发送完成，使用改进的等待机制
+    // 等待发送完成，使用改进的等待机制（这里保留超时，因为是内存信息交换的特殊情况）
     if (UCS_PTR_IS_PTR(send_req)) {
         if (!waitRequest(send_req, 10000)) {  // 10秒超时
             logError("UCXEndpoint: Send memory info request timed out");
@@ -485,7 +485,7 @@ status_t UCXEndpoint::exchangeMemoryInfo() {
         return status_t::ERROR;
     }
     
-    // 等待接收完成，使用改进的等待机制
+    // 等待接收完成，使用改进的等待机制（这里保留超时，因为是内存信息交换的特殊情况）
     bool received = false;
     
     if (UCS_PTR_IS_PTR(recv_req)) {
@@ -541,6 +541,37 @@ uint64_t UCXEndpoint::getRemoteAddress(size_t bias) const {
 void* UCXEndpoint::getLocalAddress(size_t bias) const {
     return static_cast<char*>(buffer) + bias;
 }
+
+// 等待所有挂起请求完成的辅助函数 - 移除超时限制
+status_t UCXEndpoint::waitAllPendingRequests() {
+    while (true) {
+        {
+            std::lock_guard<std::mutex> lock(requests_mutex);
+            if (pending_requests.empty()) {
+                logDebug("UCXEndpoint: All pending requests completed");
+                return status_t::SUCCESS;  // 所有请求都完成了
+            }
+            logDebug("UCXEndpoint: Still have %zu pending requests", pending_requests.size());
+        }
+        
+        // 检查连接状态，如果连接已断开则停止等待
+        if (!is_connected.load()) {
+            logError("UCXEndpoint: Connection is closed, stopping wait for pending requests");
+            return status_t::ERROR;
+        }
+        
+        // 尝试处理完成的请求
+        status_t poll_ret = pollCompletion(10);  // 每次处理最多10个完成的请求
+        if (poll_ret != status_t::SUCCESS) {
+            logError("UCXEndpoint: Error occurred while polling completions");
+            return poll_ret;
+        }
+        
+        // 短暂休眠，减少CPU占用
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+}
+
 
 bool UCXEndpoint::waitRequest(ucs_status_ptr_t req, int timeout_ms) {
     if (!UCS_PTR_IS_PTR(req)) {

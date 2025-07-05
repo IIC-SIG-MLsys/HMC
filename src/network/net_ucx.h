@@ -187,7 +187,12 @@ public:
 
 private:
     std::shared_ptr<ConnBuffer> buffer;
+    
+    // UCX配置方法
     void configureUCX(ucp_config_t* config, const std::string& target_ip);
+    
+    // 网络接口选择方法 - 新增声明
+    std::string getLocalInterfaceForTarget(const std::string& target_ip);
 };
 
 // 回调函数
