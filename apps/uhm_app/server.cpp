@@ -148,6 +148,7 @@ void recv_channel_slice_g2h2g(Context ctx) {
 
 // 接收函数：无需操作，被动接收 RDMA Write
 void recv_channel_slice_rdma_cpu(Context ctx) {
+  gpu_comm->recv(client_ip, 0, ctx.size);
   wait_for_control_message(ctrl_socket_fd);
 }
 
@@ -221,14 +222,17 @@ int main(int argc, char* argv[]) {
     
     auto start_time = std::chrono::high_resolution_clock::now();
     recv_func(ctx);
+    LOG(INFO) << "1";
     auto end_time = std::chrono::high_resolution_clock::now();
 
     std::chrono::duration<double> duration = end_time - start_time;
     double seconds = duration.count();
     double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
     double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
-
-    if (mode != "g2h2g") gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size); // g2h2g已经在内部分段直接写入了
+    
+    if (mode == "rdma_cpu")  gpu_buffer->readToCpu(host_data.data(), total_size, 0);
+    else if (mode != "g2h2g") gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size); // g2h2g已经在内部分段直接写入了
+    
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
@@ -238,7 +242,7 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    LOG(INFO) << "[Size " << total_size / (1024 * 1024) << " MB] "
+    LOG(INFO) << "[Size " << total_size << " B] "
               << "Received in " << seconds << " s, "
               << throughput_MBps << " MB/s ("
               << throughput_Gbps << " Gbps), "

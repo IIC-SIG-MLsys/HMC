@@ -48,6 +48,14 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
   return status_t::SUCCESS;
 }
 
+status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
+  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
+  void *remoteAddr =
+      reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  return postWrite(localAddr, remoteAddr, size, buffer_mr,
+                   remote_metadata_attr.key, true);
+}
+
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
   // 实现读取远端数据逻辑
   if (data_bias + size > buffer->buffer_size) {
@@ -63,14 +71,6 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
-  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
-  void *remoteAddr =
-      reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
-  return postWrite(localAddr, remoteAddr, size, buffer_mr,
-                   remote_metadata_attr.key, true);
 }
 
 status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size) {
@@ -305,6 +305,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
   // logDebug("Client::Send: sent finished");
   return status_t::SUCCESS;
 }
+
 status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
                       size_t *recv_flags, MemoryType mem_type) {
   status_t ret;
@@ -406,6 +407,30 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
   };
 
   return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::recvData(size_t data_bias, size_t size) {
+    if (data_bias + size > buffer->buffer_size) {
+        logError("Invalid data bias and size: buffer_size %zu, data_bias+size %zu",
+                 buffer->buffer_size, data_bias + size);
+        return status_t::ERROR;
+    }
+    // post Recv
+    if (recvDataNB(data_bias, size) != status_t::SUCCESS) {
+        logError("Error when posting receive");
+        return status_t::ERROR;
+    }
+    // 等待 Recv 完成
+    if (pollCompletion(1) != status_t::SUCCESS) {
+        logError("Error waiting for receiveData finished");
+        return status_t::ERROR;
+    }
+    return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::recvDataNB(size_t data_bias, size_t size) {
+    void* localAddr = static_cast<char*>(buffer->ptr) + data_bias;
+    return postRecv(localAddr, static_cast<uint32_t>(size), buffer_mr);
 }
 
 status_t RDMAEndpoint::setupBuffers() {

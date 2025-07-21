@@ -26,10 +26,12 @@ public:
 
   virtual status_t writeData(size_t data_bias, size_t size) = 0;
   virtual status_t readData(size_t data_bias, size_t size) = 0;
+  virtual status_t recvData(size_t data_bias, size_t size) = 0;
 
   // no block interface
   virtual status_t writeDataNB(size_t data_bias, size_t size) = 0;
   virtual status_t readDataNB(size_t data_bias, size_t size) = 0;
+  virtual status_t recvDataNB(size_t data_bias, size_t size) = 0;
   virtual status_t pollCompletion(int num_completions_to_process) = 0;
 
   // uhm interface, only for RDMAEndpoint

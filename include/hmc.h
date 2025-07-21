@@ -81,6 +81,11 @@ public:
   status_t readFrom(std::string ip, size_t ptr_bias, size_t size,
                     ConnType connType = ConnType::RDMA);
 
+  status_t send(std::string ip, size_t ptr_bias, size_t size,
+                   ConnType connType = ConnType::RDMA);
+  status_t recv(std::string ip, size_t ptr_bias, size_t size,
+                    ConnType connType = ConnType::RDMA); // blocked p2p rdma recv 
+
   status_t sendDataTo(std::string ip, void *send_buf, size_t buf_size, MemoryType buf_type, ConnType connType = ConnType::RDMA); // uhm interface, for big data
   status_t recvDataFrom(std::string ip, void *recv_buf, size_t buf_size, MemoryType buf_type, size_t *flag, ConnType connType = ConnType::RDMA); // flag, recv size
 

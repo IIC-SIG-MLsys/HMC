@@ -186,10 +186,10 @@ void send_channel_slice_rdma_cpu(Context ctx) {
   
   for (size_t i = 0; i < num_chunks; ++i) {
     size_t send_size = min(chunk_size, remaining);
-    // gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size-remaining);
+    gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size-remaining);
 
     auto start = high_resolution_clock::now();
-    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    gpu_comm->send(server_ip, 0, send_size, ConnType::RDMA);
     remaining -= send_size;
     auto end = high_resolution_clock::now();
 
@@ -258,6 +258,8 @@ int main(int argc, char* argv[]) {
   }
   csv_file.close();
 
+  sleep(3);
+
   for (int power = 2; power <= 26; ++power) { // 暂时有bug，发送端多发一次，即接受端的缓冲区大一些做测试，这里是2，服务端为3
     size_t total_size = pow(2, power);
     std::vector<uint8_t> host_data(total_size, 'A');
@@ -273,7 +275,7 @@ int main(int argc, char* argv[]) {
     double throughput_MBps = (total_size / 1024.0 / 1024.0) / (total_time / 1e6);
     double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
 
-    LOG(INFO) << "[Data Size " << (total_size / (1024 * 1024)) << " MB] "
+    LOG(INFO) << "[Data Size " << ( total_size) << " B] "
               << total_time << " us, "
               << throughput_MBps << " MB/s, "
               << throughput_Gbps << " Gbps";
