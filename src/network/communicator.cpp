@@ -75,6 +75,34 @@ status_t Communicator::recvDataFrom(std::string ip, void *recv_buf, size_t buf_s
       });
 };
 
+status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
+  status_t sret = checkConn(ip, connType);
+  if ( sret != status_t::SUCCESS) {
+    return sret;
+  }
+
+  return conn_manager->withEndpoint(
+      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->writeData(ptr_bias, size); // 传递返回状态
+      });
+};
+
+status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
+  status_t sret = checkConn(ip, connType);
+  if ( sret != status_t::SUCCESS) {
+    return sret;
+  }
+
+  return conn_manager->withEndpoint(
+      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
+        if (!ep)
+          return status_t::ERROR;
+        return ep->recvData(ptr_bias, size); // 传递返回状态, 阻塞接口
+      });
+};
+
 status_t Communicator::connectTo(std::string ip, uint16_t port, ConnType connType) {
   if (checkConn(ip, connType) == status_t::SUCCESS) {
     return status_t::SUCCESS;

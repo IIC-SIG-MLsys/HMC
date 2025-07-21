@@ -17,11 +17,19 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
   return status_t::SUCCESS;
 }
 
+status_t UCXEndpoint::recvData(size_t data_bias, size_t size) {
+  return status_t::SUCCESS;
+}
+
 status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size){
   return status_t::SUCCESS;
 }
 
 status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size){
+  return status_t::SUCCESS;
+}
+
+status_t UCXEndpoint::recvDataNB(size_t data_bias, size_t size){
   return status_t::SUCCESS;
 }
 
