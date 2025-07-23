@@ -627,36 +627,6 @@ bool UCXEndpoint::waitRequest(ucs_status_ptr_t req, int timeout_ms) {
     return success;
 }
 
-// 等待所有挂起请求完成的辅助函数 - 移除超时限制
-status_t UCXEndpoint::waitAllPendingRequests() {
-    while (true) {
-        {
-            std::lock_guard<std::mutex> lock(requests_mutex);
-            if (pending_requests.empty()) {
-                logDebug("UCXEndpoint: All pending requests completed");
-                return status_t::SUCCESS;  // 所有请求都完成了
-            }
-            logDebug("UCXEndpoint: Still have %zu pending requests", pending_requests.size());
-        }
-        
-        // 检查连接状态，如果连接已断开则停止等待
-        if (!is_connected.load()) {
-            logError("UCXEndpoint: Connection is closed, stopping wait for pending requests");
-            return status_t::ERROR;
-        }
-        
-        // 尝试处理完成的请求
-        status_t poll_ret = pollCompletion(10);  // 每次处理最多10个完成的请求
-        if (poll_ret != status_t::SUCCESS) {
-            logError("UCXEndpoint: Error occurred while polling completions");
-            return poll_ret;
-        }
-        
-        // 短暂休眠，减少CPU占用
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
-    }
-}
-
 void UCXEndpoint::progressWorker(int timeout_ms) {
     auto start = std::chrono::steady_clock::now();
 
