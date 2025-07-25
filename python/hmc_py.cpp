@@ -235,26 +235,32 @@ PYBIND11_MODULE(hmc, m)
            "Constructor for Communicator", py::arg("buffer"))
       .def("writeTo", &hmc::Communicator::writeTo, "Send data to remote",
            py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
-           py::arg("connType"))
+           py::arg("connType") = hmc::ConnType::RDMA)
       .def("readFrom", &hmc::Communicator::readFrom, "Read data from remote",
            py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
-           py::arg("connType"))
+           py::arg("connType") = hmc::ConnType::RDMA)
+      .def("send", &hmc::Communicator::send, "Send data (p2p)",
+           py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
+           py::arg("connType") = hmc::ConnType::RDMA)
+      .def("recv", &hmc::Communicator::recv, "Recv data (p2p, blocked)",
+           py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
+           py::arg("connType") = hmc::ConnType::RDMA)
       .def("sendDataTo", &hmc::Communicator::sendDataTo, "Send buffer to remote",
            py::arg("ip"), py::arg("send_buf"), py::arg("buf_size"),
-           py::arg("buf_type"), py::arg("connType"))
+           py::arg("buf_type"), py::arg("connType") = hmc::ConnType::RDMA)
       .def("recvDataFrom", &hmc::Communicator::recvDataFrom, "Receive buffer from remote",
            py::arg("ip"), py::arg("recv_buf"), py::arg("buf_size"),
-           py::arg("buf_type"), py::arg("flag"), py::arg("connType"))
+           py::arg("buf_type"), py::arg("flag"), py::arg("connType") = hmc::ConnType::RDMA)
       .def("connectTo", &hmc::Communicator::connectTo,
            "Connect to a new communicator", py::arg("ip"), py::arg("port"),
-           py::arg("connType"))
+           py::arg("connType") = hmc::ConnType::RDMA)
       .def("initServer", &hmc::Communicator::initServer, "Start a new Server",
-           py::arg("ip"), py::arg("port"), py::arg("connType"))
+           py::arg("ip"), py::arg("port"), py::arg("connType") = hmc::ConnType::RDMA)
       .def("closeServer", &hmc::Communicator::closeServer, "Close server")
       .def("disConnect", &hmc::Communicator::disConnect, "Disconnect endpoint",
-           py::arg("ip"), py::arg("connType"))
+           py::arg("ip"), py::arg("connType") = hmc::ConnType::RDMA)
       .def("checkConn", &hmc::Communicator::checkConn, "Check connection",
-           py::arg("ip"), py::arg("connType"));
+           py::arg("ip"), py::arg("connType") = hmc::ConnType::RDMA);
 
   // 为 PyBufferWrapper 类绑定并实现 buffer 协议，使其可直接转换为 memoryview
   py::class_<PyBufferWrapper>(m, "Buffer", py::buffer_protocol())
