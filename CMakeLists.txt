@@ -126,6 +126,10 @@ if(BUILD_PYTHON_MOD)
     pybind11_add_module(hmc ${PYTHON_SRC_RECURSE})
 
     target_link_libraries(hmc PRIVATE hmc_static_lib)
+    
+    if(CUDA_FOUND)
+        target_link_libraries(hmc PRIVATE ${CUDA_LIBRARIES})
+    endif()
 
     if(MUSA_FOUND)
         target_link_libraries(hmc PRIVATE hmc_musa_shared ${MUSA_LIBRARIES})
