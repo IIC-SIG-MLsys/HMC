@@ -33,22 +33,42 @@ elseif(MUSA_FOUND)
     target_link_libraries(comm_server PRIVATE hmc_shared_lib ${MUSA_LIBRARIES})
     target_link_libraries(comm_client PRIVATE hmc_shared_lib ${MUSA_LIBRARIES})
 else()
-    message(WARNING "ROCm, CUDA, NEUWARE, or MUSA is required but was not found. Only support CPU")
+    target_link_libraries(mem_test PRIVATE hmc_shared_lib)
+    target_link_libraries(comm_server PRIVATE hmc_shared_lib)
+    target_link_libraries(comm_client PRIVATE hmc_shared_lib)
+    message(WARNING "No GPU platform found, using CPU only")
 endif()
 
 # 包含头文件目录
 target_include_directories(mem_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>  # 仅在 MUSA 启用时添加头文件
 )
 target_include_directories(comm_server PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>
 )
 target_include_directories(comm_client PRIVATE
     ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>
 )
+
+# 添加UCX支持 - 如果UCX可用则链接
+if(UCX_FOUND)
+    target_link_libraries(mem_test PRIVATE ${UCX_LIBRARIES})
+    target_link_libraries(comm_server PRIVATE ${UCX_LIBRARIES})
+    target_link_libraries(comm_client PRIVATE ${UCX_LIBRARIES})
+    
+    # 添加UCX包含目录
+    target_include_directories(mem_test PRIVATE ${UCX_INCLUDE_DIR})
+    target_include_directories(comm_server PRIVATE ${UCX_INCLUDE_DIR})
+    target_include_directories(comm_client PRIVATE ${UCX_INCLUDE_DIR})
+    
+    message(STATUS "UCX libraries linked to comm_app: ${UCX_LIBRARIES}")
+endif()
 
 # 链接 GLOG
 target_link_libraries(mem_test PUBLIC glog)
