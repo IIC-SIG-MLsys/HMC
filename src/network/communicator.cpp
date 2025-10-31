@@ -12,7 +12,7 @@ Communicator::Communicator(std::shared_ptr<ConnBuffer> buffer)
 };
 
 Communicator::~Communicator() {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+  auto &ctrl = hmc::CtrlSocketManager::instance();
   ctrl.stopServer();
   ctrl.closeAll();
 
@@ -24,7 +24,7 @@ Communicator::~Communicator() {
 status_t Communicator::writeTo(std::string ip, size_t ptr_bias, size_t size,
                                ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
@@ -36,10 +36,10 @@ status_t Communicator::writeTo(std::string ip, size_t ptr_bias, size_t size,
       });
 };
 
-status_t Communicator::readFrom(std::string ip, size_t ptr_bias,
-                                size_t size, ConnType connType) {
+status_t Communicator::readFrom(std::string ip, size_t ptr_bias, size_t size,
+                                ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
@@ -51,9 +51,11 @@ status_t Communicator::readFrom(std::string ip, size_t ptr_bias,
       });
 };
 
-status_t Communicator::sendDataTo(std::string ip, void *send_buf, size_t buf_size, MemoryType buf_type, ConnType connType) {
+status_t Communicator::sendDataTo(std::string ip, void *send_buf,
+                                  size_t buf_size, MemoryType buf_type,
+                                  ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
@@ -65,9 +67,11 @@ status_t Communicator::sendDataTo(std::string ip, void *send_buf, size_t buf_siz
       });
 };
 
-status_t Communicator::recvDataFrom(std::string ip, void *recv_buf, size_t buf_size, MemoryType buf_type, size_t *flag, ConnType connType) {
+status_t Communicator::recvDataFrom(std::string ip, void *recv_buf,
+                                    size_t buf_size, MemoryType buf_type,
+                                    size_t *flag, ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
@@ -79,10 +83,11 @@ status_t Communicator::recvDataFrom(std::string ip, void *recv_buf, size_t buf_s
       });
 };
 
-status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size,
+                            ConnType connType) {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
@@ -100,52 +105,58 @@ status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size, ConnTy
   return sret;
 };
 
-status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size,
+                            ConnType connType) {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
   status_t sret = checkConn(ip, connType);
-  if ( sret != status_t::SUCCESS) {
+  if (sret != status_t::SUCCESS) {
     return sret;
   }
 
   int ret;
   ctrl.recvCtrlInt(ip, ret);
-  if (ret == 1) return status_t::SUCCESS;
-  else return status_t::ERROR;
+  if (ret == 1)
+    return status_t::SUCCESS;
+  else
+    return status_t::ERROR;
 };
 
-status_t Communicator::connectTo(std::string ip, uint16_t port, ConnType connType) {
+status_t Communicator::connectTo(std::string ip, uint16_t port,
+                                 ConnType connType) {
   if (checkConn(ip, connType) == status_t::SUCCESS) {
     return status_t::SUCCESS;
   }
 
-  auto& ctrl = hmc::CtrlSocketManager::instance();
-  int ctrl_fd = ctrl.getCtrlSockFd(ip, port + 1);   // 客户端主动连接
+  auto &ctrl = hmc::CtrlSocketManager::instance();
+  int ctrl_fd = ctrl.getCtrlSockFd(ip, port + 1); // 客户端主动连接
   if (ctrl_fd < 0) {
-    std::cerr << "[Communicator] Failed to connect control channel to " << ip << ":" << port + 1 << "\n";
+    std::cerr << "[Communicator] Failed to connect control channel to " << ip
+              << ":" << port + 1 << "\n";
     return status_t::ERROR;
   }
 
   // connect to node, create a new Endpoint
   auto ret = conn_manager->initiateConnectionAsClient(ip, port, connType);
-  if (ret != status_t::SUCCESS) ctrl.closeConnection(ip);
+  if (ret != status_t::SUCCESS)
+    ctrl.closeConnection(ip);
   return ret;
 };
 
 status_t Communicator::initServer(std::string ip, uint16_t port,
                                   ConnType serverType) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
-  ctrl.startServer(ip, port+1);
+  auto &ctrl = hmc::CtrlSocketManager::instance();
+  ctrl.startServer(ip, port + 1);
   return conn_manager->initiateServer(ip, port, serverType);
 };
 
-status_t Communicator::closeServer(){
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+status_t Communicator::closeServer() {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
   ctrl.stopServer();
   return conn_manager->stopServer();
 };
 
 status_t Communicator::disConnect(std::string ip, ConnType connType) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+  auto &ctrl = hmc::CtrlSocketManager::instance();
   ctrl.closeConnection(ip);
 
   if (checkConn(ip, connType) == status_t::SUCCESS) {
@@ -183,7 +194,6 @@ status_t Communicator::checkConn(std::string ip, ConnType connType) {
 //   logDebug("Communicator::connect: get endpoint by ip %s failed",
 //   ip); return nullptr;
 // };
-
 
 /* ConnBuffer */
 ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type)
@@ -226,7 +236,8 @@ status_t ConnBuffer::writeFromGpu(void *src, size_t size, size_t bias) {
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
-    logError("Error write data from GPU to CPU using CPU ConnBuffer, Please use gpu mem_ops.");
+    logError("Error write data from GPU to CPU using CPU ConnBuffer, Please "
+             "use gpu mem_ops.");
     return status_t::ERROR;
   }
   return mem_ops->copyDeviceToDevice(static_cast<char *>(ptr) + bias, src,
@@ -240,7 +251,8 @@ status_t ConnBuffer::readToGpu(void *dest, size_t size, size_t bias) {
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
-    logError("Error read data from CPU to GPU using CPU ConnBuffer, Please use gpu mem_ops.");
+    logError("Error read data from CPU to GPU using CPU ConnBuffer, Please use "
+             "gpu mem_ops.");
     return status_t::ERROR;
   }
   return mem_ops->copyDeviceToDevice(dest, static_cast<char *>(ptr) + bias,

@@ -28,14 +28,17 @@ public:
   virtual status_t readData(size_t data_bias, size_t size) = 0;
 
   // no block interface
-  virtual status_t writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id) = 0;
-  virtual status_t readDataNB(size_t data_bias, size_t size, uint64_t* wr_id) = 0;
+  virtual status_t writeDataNB(size_t data_bias, size_t size,
+                               uint64_t *wr_id) = 0;
+  virtual status_t readDataNB(size_t data_bias, size_t size,
+                              uint64_t *wr_id) = 0;
   virtual status_t waitWrId(uint64_t wr_id) = 0;
 
   // uhm interface, only for RDMAEndpoint
-  virtual status_t uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) = 0;
+  virtual status_t uhm_send(void *input_buffer, const size_t send_flags,
+                            MemoryType mem_type) = 0;
   virtual status_t uhm_recv(void *output_buffer, const size_t buffer_size,
-                      size_t *recv_flags, MemoryType mem_type) = 0;
+                            size_t *recv_flags, MemoryType mem_type) = 0;
 
   virtual status_t closeEndpoint() = 0;
 
@@ -60,6 +63,7 @@ public:
   // 监听连接请求
   virtual status_t listen(std::string ip, uint16_t port) = 0;
   virtual status_t stopListen() = 0;
+
 protected:
   std::shared_ptr<ConnManager> conn_manager;
 };

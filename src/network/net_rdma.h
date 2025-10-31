@@ -13,14 +13,16 @@ namespace hmc {
 
 #define UHM_STATE_TYPE uint32_t
 typedef enum {
-    UHM_BUFFER_CAN_WRITE = 0, // 标识发送端可以写
-    UHM_BUFFER_CAN_READ = 1,  // 标识接收端可以读
-    UHM_BUFFER_FINISHED = 2   // 标识传输完成
+  UHM_BUFFER_CAN_WRITE = 0, // 标识发送端可以写
+  UHM_BUFFER_CAN_READ = 1,  // 标识接收端可以读
+  UHM_BUFFER_FINISHED = 2   // 标识传输完成
 } UHMBufferStateType;
 
 struct __attribute__((packed)) UHMBufferState {
-  volatile UHM_STATE_TYPE state[2]; // 0: 第一个buffer，1: 第二个buffer // volatile内存屏障，保障总能拿到最新的值而不是缓存
-  volatile UHM_STATE_TYPE length;   // 第三位是length标识传输长度
+  volatile UHM_STATE_TYPE
+      state[2]; // 0: 第一个buffer，1: 第二个buffer //
+                // volatile内存屏障，保障总能拿到最新的值而不是缓存
+  volatile UHM_STATE_TYPE length; // 第三位是length标识传输长度
 };
 
 struct __attribute((packed)) rdma_buffer_attr {
@@ -41,13 +43,14 @@ public:
   status_t writeData(size_t data_bias, size_t size) override;
   status_t readData(size_t data_bias, size_t size) override;
 
-  status_t writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
-  status_t readDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
+  status_t writeDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
+  status_t readDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
   status_t waitWrId(uint64_t wr_id) override;
 
-  status_t uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) override;
+  status_t uhm_send(void *input_buffer, const size_t send_flags,
+                    MemoryType mem_type) override;
   status_t uhm_recv(void *output_buffer, const size_t buffer_size,
-                      size_t *recv_flags, MemoryType mem_type) override;
+                    size_t *recv_flags, MemoryType mem_type) override;
 
   ~RDMAEndpoint();
 
@@ -59,18 +62,19 @@ public:
 
   status_t postSend(void *addr, size_t length, struct ibv_mr *mr,
                     uint64_t wr_id, bool signaled = true);
-  status_t postRecv(void *addr, size_t length, struct ibv_mr *mr, uint64_t wr_id);
+  status_t postRecv(void *addr, size_t length, struct ibv_mr *mr,
+                    uint64_t wr_id);
   status_t postWrite(void *local_addr, void *remote_addr, size_t length,
-                     struct ibv_mr *local_mr, uint32_t remote_key, uint64_t wr_id,
-                     bool signaled);
+                     struct ibv_mr *local_mr, uint32_t remote_key,
+                     uint64_t wr_id, bool signaled);
   status_t postRead(void *local_addr, void *remote_addr, size_t length,
-                    struct ibv_mr *local_mr, uint32_t remote_key, uint64_t wr_id,
-                    bool signaled);
+                    struct ibv_mr *local_mr, uint32_t remote_key,
+                    uint64_t wr_id, bool signaled);
 
 public:
   std::shared_ptr<ConnBuffer> buffer;
   bool is_buffer_ok = false;
-  status_t connStatus = status_t::ERROR; // 连接成功后转为SUCCESS 
+  status_t connStatus = status_t::ERROR; // 连接成功后转为SUCCESS
 
   // the RDMA connection identifier : cm(connection management)
   struct rdma_cm_id *cm_id = NULL; // server创建的时候传入的是remote_cm_id
@@ -118,6 +122,7 @@ public:
   std::unique_ptr<RDMAEndpoint> handleConnection(rdma_cm_id *id);
 
   status_t stopListen() override;
+
 private:
   std::shared_ptr<ConnBuffer> buffer;
   struct rdma_cm_id *server_cm_id = NULL; // server用来监听的cm
@@ -125,7 +130,8 @@ private:
 
   // status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
   // status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
-  status_t exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint);
+  status_t exchangeMetaData(std::string ip,
+                            std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
 class RDMAClient : public Client {
@@ -146,7 +152,8 @@ private:
 
   // status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
   // status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
-  status_t exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint);
+  status_t exchangeMetaData(std::string ip,
+                            std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
 } // namespace hmc

@@ -17,24 +17,25 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id){
+status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size,
+                                  uint64_t *wr_id) {
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size, uint64_t* wr_id){
+status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size,
+                                 uint64_t *wr_id) {
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::waitWrId(uint64_t wr_id){
-  return status_t::SUCCESS;
-}
+status_t UCXEndpoint::waitWrId(uint64_t wr_id) { return status_t::SUCCESS; }
 
-status_t UCXEndpoint::uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) {
+status_t UCXEndpoint::uhm_send(void *input_buffer, const size_t send_flags,
+                               MemoryType mem_type) {
   return status_t::UNSUPPORT;
 }
 
 status_t UCXEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
-                      size_t *recv_flags, MemoryType mem_type) {
+                               size_t *recv_flags, MemoryType mem_type) {
   return status_t::UNSUPPORT;
 }
 

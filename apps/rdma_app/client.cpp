@@ -1,14 +1,13 @@
 #include <chrono>
-#include <glog/logging.h>
-#include <iostream>
-#include <thread>
 #include <cmath>
 #include <fstream>
+#include <glog/logging.h>
+#include <hmc.h>
+#include <iomanip>
+#include <iostream>
+#include <thread>
 #include <unistd.h>
 #include <vector>
-#include <cmath>
-#include <iomanip>
-#include <hmc.h>
 
 using namespace hmc;
 using namespace std;
@@ -23,9 +22,9 @@ void UHMperformanceTestSendLogic(const std::string &server_ip) {
   FLAGS_alsologtostderr = true;
 
   auto buffer = std::make_shared<ConnBuffer>(device_id, buffer_size);
-  Communicator* comm = new Communicator(buffer);
+  Communicator *comm = new Communicator(buffer);
 
-  Memory* mem = new Memory(0);
+  Memory *mem = new Memory(0);
 
   comm->initServer(server_ip, 2026, ConnType::RDMA);
   comm->addNewRankAddr(0, server_ip, 12026);
@@ -37,7 +36,6 @@ void UHMperformanceTestSendLogic(const std::string &server_ip) {
     std::vector<uint8_t> host_data(data_size, 'A');
     mem->allocateBuffer(&buffer->ptr, buffer_size);
     mem->copyHostToDevice(buffer->ptr, host_data.data(), data_size);
-  
 
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
     // UHM interface
@@ -47,31 +45,34 @@ void UHMperformanceTestSendLogic(const std::string &server_ip) {
 
     auto sendDataTo_end_time = high_resolution_clock::now();
 
-    auto sendDataTo_write_time = duration_cast<microseconds>(sendDataTo_end_time - sendDataTo_start_time);
+    auto sendDataTo_write_time = duration_cast<microseconds>(
+        sendDataTo_end_time - sendDataTo_start_time);
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
-    
+
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
     // Serial interface
     usleep(10000);
     void *send1;
     mem->allocateBuffer(&send1, data_size);
     mem->copyHostToDevice(send1, host_data.data(), data_size);
-    
+
     size_t buffer_size = buffer_size / 2;
-    size_t num_send_chunks =
-      (data_size + buffer_size - 1) / buffer_size;
+    size_t num_send_chunks = (data_size + buffer_size - 1) / buffer_size;
 
     long long total_time = 0;
-    char* send_buffer = (char*)send1;
+    char *send_buffer = (char *)send1;
 
-    for(int i = 0; i < num_send_chunks; i++){
+    for (int i = 0; i < num_send_chunks; i++) {
       std::cout << "i = " << i << std::endl;
       auto Serial_write_start_time = high_resolution_clock::now();
-      comm->sendDataTo(0, send_buffer + i * buffer_size, std::min(buffer_size, data_size - i * buffer_size), MemoryType::AMD_GPU);
+      comm->sendDataTo(0, send_buffer + i * buffer_size,
+                       std::min(buffer_size, data_size - i * buffer_size),
+                       MemoryType::AMD_GPU);
       auto Serial_write_end_time = high_resolution_clock::now();
       usleep(10000);
-      total_time += duration_cast<microseconds>(
-            Serial_write_end_time - Serial_write_start_time).count();
+      total_time += duration_cast<microseconds>(Serial_write_end_time -
+                                                Serial_write_start_time)
+                        .count();
     }
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
 
@@ -86,7 +87,8 @@ void UHMperformanceTestSendLogic(const std::string &server_ip) {
 
     auto G2H2G_end_time = high_resolution_clock::now();
 
-    auto G2H2G_write_time = duration_cast<microseconds>(G2H2G_end_time - G2H2G_sendDataTo_start_time);
+    auto G2H2G_write_time = duration_cast<microseconds>(
+        G2H2G_end_time - G2H2G_sendDataTo_start_time);
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
     // Ideal RDMA interface
@@ -96,52 +98,54 @@ void UHMperformanceTestSendLogic(const std::string &server_ip) {
 
     auto Ideal_sendDataTo_end_time = high_resolution_clock::now();
 
-    auto Ideal_write_time = duration_cast<microseconds>(Ideal_sendDataTo_end_time - Ideal_sendDataTo_start_time); 
+    auto Ideal_write_time = duration_cast<microseconds>(
+        Ideal_sendDataTo_end_time - Ideal_sendDataTo_start_time);
     /*————————————————————————————————————————————————————————————————————————————————————————————————————————————————————————*/
     string filename = "performanceTest.csv";
-      ofstream header_file(filename, ios::app);
-      if (header_file.tellp() == 0) {
-          header_file << "Data Size,Ideal,Serial,UHM,G2H2G\n";
-      }
-      header_file.close();
-      ofstream file(filename, ios::app); // Append mode
-      if (file.is_open()) {
-        file << power  << "," << Ideal_write_time.count() << "," << total_time <<"," << G2H2G_write_time.count() <<"\n";
-        file.close();
-        cout << "Data written to " << filename << endl;
-      } else {
-          cerr << "Failed to open file " << filename << endl;
-      }
-   }
+    ofstream header_file(filename, ios::app);
+    if (header_file.tellp() == 0) {
+      header_file << "Data Size,Ideal,Serial,UHM,G2H2G\n";
+    }
+    header_file.close();
+    ofstream file(filename, ios::app); // Append mode
+    if (file.is_open()) {
+      file << power << "," << Ideal_write_time.count() << "," << total_time
+           << "," << G2H2G_write_time.count() << "\n";
+      file.close();
+      cout << "Data written to " << filename << endl;
+    } else {
+      cerr << "Failed to open file " << filename << endl;
+    }
+  }
 }
 
 void performanceTest(std::vector<std::string> ips) {
-  for(std::string ip : ips) {
-      string filename = "performanceTest.csv";
-      ofstream header_file(filename, ios::app);
-      if (header_file.tellp() == 0) {
-          header_file << "Data Size,Ideal,Serial,UHM,G2H2G\n";
-      }
-      header_file.close();
-      ofstream file(filename, ios::app); // Append mode
-      if (file.is_open()) {
-          file<< ip << "\n";
-          file.close();
-          cout << "Data written to " << filename << endl;
-      } else {
-          cerr << "Failed to open file " << filename << endl;
-      }
-      UHMperformanceTestSendLogic(ip);
-    } 
+  for (std::string ip : ips) {
+    string filename = "performanceTest.csv";
+    ofstream header_file(filename, ios::app);
+    if (header_file.tellp() == 0) {
+      header_file << "Data Size,Ideal,Serial,UHM,G2H2G\n";
+    }
+    header_file.close();
+    ofstream file(filename, ios::app); // Append mode
+    if (file.is_open()) {
+      file << ip << "\n";
+      file.close();
+      cout << "Data written to " << filename << endl;
+    } else {
+      cerr << "Failed to open file " << filename << endl;
+    }
+    UHMperformanceTestSendLogic(ip);
+  }
 }
 
 int main() {
   std::string remote_ip_hygon1 = "192.168.2.240"; // hygon1
   std::string remote_ip_hygon2 = "192.168.2.253"; // hygon2
-  std::string remote_ip_nv2 = "192.168.2.243"; // nv2
-  std::string remote_ip_nv3 = "192.168.2.247"; // nv3
-  std::string remote_ip_cam2 = "192.168.2.252"; // cam2
-  std::string remote_ip_moore = "192.168.2.238"; // moore
+  std::string remote_ip_nv2 = "192.168.2.243";    // nv2
+  std::string remote_ip_nv3 = "192.168.2.247";    // nv3
+  std::string remote_ip_cam2 = "192.168.2.252";   // cam2
+  std::string remote_ip_moore = "192.168.2.238";  // moore
 
   std::vector<std::string> ips;
 

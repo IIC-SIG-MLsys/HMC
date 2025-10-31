@@ -27,8 +27,7 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     logError("Client::Start: Failed to convert IP address to binary form");
   }
 
-  auto endpoint =
-      std::make_unique<RDMAEndpoint>(buffer);
+  auto endpoint = std::make_unique<RDMAEndpoint>(buffer);
   endpoint->role = EndpointType::Client;
 
   while (this->retry_count < this->max_retry_times) {
@@ -155,8 +154,9 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     //   logError("Client::start_client: Failed to exchange metadata");
     //   goto failed;
     // }
-    
-    if (exchangeMetaData(ip, endpoint)!=status_t::SUCCESS) goto failed;
+
+    if (exchangeMetaData(ip, endpoint) != status_t::SUCCESS)
+      goto failed;
 
     logDebug("Client started successfully");
     endpoint->connStatus = status_t::SUCCESS;
@@ -180,7 +180,8 @@ failed:
 }
 
 // status_t
-// RDMAClient::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+// RDMAClient::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint)
+// {
 //   // 接收服务器的元数据：发送前先准备一个接收，因为对面是阻塞先收后发。
 //   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
 //   struct ibv_sge recv_sge;
@@ -204,7 +205,8 @@ failed:
 //   return status_t::SUCCESS;
 // }
 
-// status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+// status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint>
+// &endpoint) {
 //   /** buffer 的元信息交换 **/
 
 //   // 准备发送本地元数据
@@ -257,8 +259,9 @@ failed:
 // }
 
 // client side
-status_t RDMAClient::exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+status_t RDMAClient::exchangeMetaData(std::string ip,
+                                      std::unique_ptr<RDMAEndpoint> &endpoint) {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
 
   // 1) client 先发：把自己的 local metadata 发给 server
   if (!ctrl.sendCtrlStruct(ip, endpoint->local_metadata_attr)) {

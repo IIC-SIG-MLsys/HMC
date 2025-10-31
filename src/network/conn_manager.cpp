@@ -86,7 +86,8 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
 
   std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
   auto &entry = endpoint_map[targetIp];
-  // std::lock_guard<std::mutex> entry_lock(entry.mutex); // 必是单独访问,不需要锁
+  // std::lock_guard<std::mutex> entry_lock(entry.mutex); //
+  // 必是单独访问,不需要锁
   entry.endpoint = std::move(endpoint);
 
   return status_t::SUCCESS;
@@ -97,7 +98,8 @@ void ConnManager::_addEndpoint(std::string ip,
   if (endpoint) {
     std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
     auto &entry = endpoint_map[ip];
-    // std::lock_guard<std::mutex> entry_lock(entry.mutex);  // 必是单独访问,不需要锁
+    // std::lock_guard<std::mutex> entry_lock(entry.mutex);  //
+    // 必是单独访问,不需要锁
     entry.endpoint = std::move(endpoint);
   } else {
     logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");

@@ -11,7 +11,7 @@ namespace hmc {
 /*
  * nvidia gpu memory
  */
-status_t NeuwareMemory::init() { 
+status_t NeuwareMemory::init() {
   status_t sret = gpuInit();
   if (sret != status_t::SUCCESS) {
     logError("NeuwareMemory init Neuware err %s.", status_to_string(sret));
@@ -19,7 +19,8 @@ status_t NeuwareMemory::init() {
   }
   sret = gpuGetDevice(&mlu_dev, device_id);
   if (sret != status_t::SUCCESS) {
-    logError("NeuwareMemory get device %d err %s.", device_id, status_to_string(sret));
+    logError("NeuwareMemory get device %d err %s.", device_id,
+             status_to_string(sret));
     return sret;
   }
   sret = gpuCreateContext(&mlu_ctx, mlu_dev);
@@ -30,9 +31,7 @@ status_t NeuwareMemory::init() {
   return sret;
 }
 
-status_t NeuwareMemory::free() { 
-  return gpuFreeContext(mlu_ctx);
-}
+status_t NeuwareMemory::free() { return gpuFreeContext(mlu_ctx); }
 
 status_t NeuwareMemory::allocateBuffer(void **addr, size_t size) {
   CNresult ret;

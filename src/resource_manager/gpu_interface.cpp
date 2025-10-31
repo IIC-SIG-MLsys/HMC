@@ -36,8 +36,8 @@ status_t gpuInit() {
   /* we need create ctx and maintain it in whole lifecycle */
   // res = cnDeviceGetCount(&device_count);
   // if (device_count <= 0){
-  //   logError("cnDeviceGetCount failed with error code %d", CN_ERROR_NO_DEVICE);
-  //   return status_t::ERROR;
+  //   logError("cnDeviceGetCount failed with error code %d",
+  //   CN_ERROR_NO_DEVICE); return status_t::ERROR;
   // }
   // res = cnDeviceGet(&cndev, 0);
   // if (res != CN_SUCCESS) {
@@ -99,7 +99,8 @@ status_t gpuGetPcieBusId(std::string *bus_id, int device_id) {
   return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   char pciBusId[16];
-  musaError_t res = musaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
+  musaError_t res =
+      musaDeviceGetPCIBusId(pciBusId, sizeof(pciBusId), device_id);
   if (res != musaSuccess) {
     logError("hipDeviceGetPCIBusId failed with error code %d\n", res);
     return status_t::ERROR;

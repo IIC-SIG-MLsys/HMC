@@ -86,7 +86,8 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
       }
       logDebug("endpoint cm_id %p", event_copy.id);
       std::unique_ptr<hmc::RDMAEndpoint> ep = handleConnection(event_copy.id);
-      if(exchangeMetaData(recv_ip, ep)!=status_t::SUCCESS) continue; // if error, skip
+      if (exchangeMetaData(recv_ip, ep) != status_t::SUCCESS)
+        continue; // if error, skip
       conn_manager->_addEndpoint(recv_ip, std::move(ep));
       // conn_manager->_printEndpointMap();
       // handleConnection的时候，内部会处理一个链接建立完成事件
@@ -122,8 +123,7 @@ std::unique_ptr<RDMAEndpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
 
   logDebug("buffer: buffer->ptr %p, buffer->size %zu", buffer->ptr,
            buffer->buffer_size);
-  auto endpoint =
-      std::make_unique<RDMAEndpoint>(buffer);
+  auto endpoint = std::make_unique<RDMAEndpoint>(buffer);
   endpoint->role = EndpointType::Server;
 
   endpoint->cm_id = id;
@@ -215,7 +215,8 @@ failed:
 }
 
 // status_t
-// RDMAServer::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+// RDMAServer::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint)
+// {
 //   // 接收对端的元数据：发送前先准备一个接收。
 //   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
 //   struct ibv_sge recv_sge;
@@ -239,7 +240,8 @@ failed:
 //   return status_t::SUCCESS;
 // }
 
-// status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+// status_t RDMAServer::exchangeMetadata(std::unique_ptr<RDMAEndpoint>
+// &endpoint) {
 //   struct ibv_send_wr send_wr, *bad_send_wr = nullptr;
 //   struct ibv_sge send_sge;
 
@@ -296,8 +298,9 @@ status_t RDMAServer::stopListen() {
 }
 
 // server side
-status_t RDMAServer::exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint) {
-  auto& ctrl = hmc::CtrlSocketManager::instance();
+status_t RDMAServer::exchangeMetaData(std::string ip,
+                                      std::unique_ptr<RDMAEndpoint> &endpoint) {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
 
   // 1) server 先收：接收 client 的 local metadata，作为自己的 remote metadata
   decltype(endpoint->remote_metadata_attr) client_meta{};

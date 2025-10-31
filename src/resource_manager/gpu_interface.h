@@ -83,7 +83,8 @@ inline status_t gpuSetCtx(T &ctx) {
 };
 
 // only for neuware: CNContext. CNDev
-template <typename T, typename D> inline status_t gpuCreateContext(T *ctx, D dev) {
+template <typename T, typename D>
+inline status_t gpuCreateContext(T *ctx, D dev) {
 #ifdef ENABLE_NEUWARE
   CNresult res = cnCtxCreate(ctx, 0, dev);
   if (res != CN_SUCCESS) {

@@ -1,52 +1,290 @@
-# HMC  
-Heterogeneous Memories Communication
+# HMC User Guide
 
-[中文](README_zh.md)
+**Heterogeneous Memories Communication Framework**
+© 2025 SDU spgroup Holding Limited
 
-## How to Build?
-> You can automatically build the project by running bash `build.sh`
+---
 
-1. Create a build directory  
-```
+## 🧩 Overview
+
+**HMC (Heterogeneous Memories Communication)** is a unified communication and memory management framework designed for heterogeneous computing environments — including **CPU, GPU, MLU, NPU**, and other accelerators.
+
+It provides:
+
+* Unified **memory abstraction** for multiple device types
+* High-performance **RDMA/UCX communication layer**
+* Built-in **control channel (TCP-based)** for synchronization
+* Seamless data transfer between heterogeneous devices
+
+---
+
+## ⚙️ Build & Installation
+
+### Prerequisites
+
+#### System Dependencies
+
+* **C++14** compiler or higher
+* **CMake ≥ 3.18**
+* **Glog** (for logging)
+
+  ```bash
+  sudo apt-get install libgoogle-glog-dev
+  ```
+* **GTest** (optional, for testing)
+
+  ```bash
+  sudo apt-get install libgtest-dev
+  ```
+* Device-specific drivers and SDKs:
+
+  * **CUDA** (for NVIDIA GPU)
+  * **ROCm** (for AMD GPU)
+  * **CNRT / MLU-OP** (for Cambricon MLU)
+  * **Ascend CANN** (for Huawei Ascend NPU)
+  * **MUSA Runtime** (for Moore Threads GPU)
+
+---
+
+### Build from Source
+
+```bash
+# Clone and enter the repository
+git clone https://github.com/yourorg/hmc.git
+cd hmc
+
+# Create build directory
 mkdir build && cd build
-```
 
-2. Generate the Makefile  
-```
+# Generate Makefile
 cmake ..
+
+# Compile
+make -j
 ```
 
-Supported parameters:  
-```
--DBUILD_STATIC_LIB=ON # Enable static library compilation
--DBUILD_PYTHON_MOD=ON # Enable python interface
+#### Optional CMake Flags
+
+| Option                  | Description                          |
+| ----------------------- | ------------------------------------ |
+| `-DBUILD_STATIC_LIB=ON` | Build static library (`libhmc.a`)    |
+| `-DBUILD_PYTHON_MOD=ON` | Build Python bindings (via PyBind11) |
+
+---
+
+### Python Package (Optional)
+
+HMC provides a Python interface built with **PyBind11**.
+
+```bash
+# Initialize submodules
+git submodule update --init --recursive
+
+# Rebuild with Python module enabled
+cmake .. -DBUILD_PYTHON_MOD=ON
+make -j
+
+# Build Python wheel
+python -m build
+
+# Install the package
+pip install dist/hmc-*.whl
 ```
 
-3. Build  
+---
+
+## 🚀 Quick Start
+
+### Example 1 — Basic Memory Management
+
+```cpp
+#include <hmc.h>
+using namespace hmc;
+
+int main() {
+    Memory gpu_mem(0, MemoryType::NVIDIA_GPU);
+    void* gpu_ptr = nullptr;
+
+    // Allocate 1MB on GPU
+    gpu_mem.allocateBuffer(&gpu_ptr, 1024 * 1024);
+
+    // Copy data from CPU to GPU
+    std::vector<char> host_data(1024 * 1024, 'A');
+    gpu_mem.copyHostToDevice(gpu_ptr, host_data.data(), host_data.size());
+
+    // Free GPU memory
+    gpu_mem.freeBuffer(gpu_ptr);
+}
 ```
-make
+
+---
+
+### Example 2 — RDMA Communication
+
+```cpp
+#include <hmc.h>
+using namespace hmc;
+
+// Shared RDMA buffer
+auto buffer = std::make_shared<ConnBuffer>(0, 64 * 1024 * 1024);
+Communicator comm(buffer);
+
+std::string server_ip = "192.168.2.100";
+
+// Client
+comm.connectTo(server_ip, 2025, ConnType::RDMA);
+comm.writeTo(server_ip, 0, 4096);
+comm.disConnect(server_ip, ConnType::RDMA);
+
+// Server
+comm.initServer(server_ip, 2025, ConnType::RDMA);
+comm.closeServer();
 ```
 
-## Environment Dependencies
-1. Compute libraries and drivers: CUDA/DTK/CNRT, etc.
-2. Glog  
-    - `sudo apt-get install libgoogle-glog-dev`
-3. Gtest if build tests
-    - `sudo apt-get install libgtest-dev`
+---
+
+### Example 3 — Control Message Channel
+
+```cpp
+#include <hmc.h>
+using namespace hmc;
+
+CtrlSocketManager& ctrl = CtrlSocketManager::instance();
+
+// Start server
+ctrl.startServer("0.0.0.0", 5555);
+
+// Client side
+int sock_fd = ctrl.getCtrlSockFd("192.168.2.100", 5555);
+ctrl.sendCtrlInt("192.168.2.100", 42);
+
+// Receive control integer
+int value;
+ctrl.recvCtrlInt("192.168.2.100", value);
+printf("Received control value: %d\n", value);
+
+// Clean up
+ctrl.closeConnection("192.168.2.100");
+```
+
+---
+
+## 🧠 API Reference
+
+### 1️⃣ Memory Management (`Memory`)
+
+| Method                                                         | Description                            |
+| -------------------------------------------------------------- | -------------------------------------- |
+| `allocateBuffer(void** addr, size_t size)`                     | Allocate memory on the selected device |
+| `freeBuffer(void* addr)`                                       | Free allocated memory                  |
+| `copyHostToDevice(void* dest, const void* src, size_t size)`   | Copy data from host to device          |
+| `copyDeviceToHost(void* dest, const void* src, size_t size)`   | Copy data from device to host          |
+| `copyDeviceToDevice(void* dest, const void* src, size_t size)` | Copy within same device                |
+
+Supported memory types:
+
+```cpp
+enum class MemoryType {
+  DEFAULT,
+  CPU,
+  NVIDIA_GPU,
+  AMD_GPU,
+  CAMBRICON_MLU,
+  HUAWEI_ASCEND_NPU,
+  MOORE_GPU
+};
+```
+
+---
+
+### 2️⃣ Connection Buffer (`ConnBuffer`)
+
+| Method                                              | Description                      |
+| --------------------------------------------------- | -------------------------------- |
+| `writeFromCpu(void* src, size_t size, size_t bias)` | Write CPU data to buffer         |
+| `readToCpu(void* dest, size_t size, size_t bias)`   | Read buffer data to CPU          |
+| `writeFromGpu(void* src, size_t size, size_t bias)` | Write GPU data into buffer       |
+| `readToGpu(void* dest, size_t size, size_t bias)`   | Read buffer data into GPU memory |
+
+---
+
+### 3️⃣ Communicator
+
+The unified RDMA/UCX communication manager.
+
+| Method                                              | Description                |
+| --------------------------------------------------- | -------------------------- |
+| `initServer(ip, port, type)`                        | Initialize RDMA/UCX server |
+| `connectTo(ip, port, type)`                         | Connect to remote endpoint |
+| `writeTo(ip, offset, size, type)`                   | RDMA write data            |
+| `readFrom(ip, offset, size, type)`                  | RDMA read data             |
+| `sendDataTo(ip, buf, size, buf_type, type)`         | Send large data buffer     |
+| `recvDataFrom(ip, buf, size, buf_type, flag, type)` | Receive large data buffer  |
+| `closeServer()`                                     | Stop server                |
+| `disConnect(ip, type)`                              | Disconnect from peer       |
+
+---
+
+### 4️⃣ Control Channel (`CtrlSocketManager`)
+
+| Method                        | Description                     |
+| ----------------------------- | ------------------------------- |
+| `startServer(bind_ip, port)`  | Start TCP control server        |
+| `getCtrlSockFd(ip, port)`     | Connect to control server       |
+| `sendCtrlInt(ip, int value)`  | Send integer control message    |
+| `recvCtrlInt(ip, int& value)` | Receive integer control message |
+| `sendCtrlStruct(ip, obj)`     | Send POD structure              |
+| `recvCtrlStruct(ip, obj)`     | Receive POD structure           |
+| `closeConnection(ip)`         | Close connection                |
+| `closeAll()`                  | Close all connections           |
+
+---
+
+### 5️⃣ Status Codes
+
+| Enum             | Meaning             |
+| ---------------- | ------------------- |
+| `SUCCESS`        | Operation succeeded |
+| `ERROR`          | General error       |
+| `UNSUPPORT`      | Not supported       |
+| `INVALID_CONFIG` | Configuration error |
+| `TIMEOUT`        | Timeout occurred    |
+| `NOT_FOUND`      | Object not found    |
+
+---
+
+## 🧪 Benchmark Example
+
+```bash
+# Run RDMA CPU benchmark
+./build/apps/uhm_app/uhm_server --mode uhm
+./build/apps/uhm_app/uhm_client --mode uhm
+```
+
+Supported modes:
+
+| Mode       | Description              |
+| ---------- | ------------------------ |
+| `uhm`      | GPU direct RDMA          |
+| `rdma_cpu` | CPU-only RDMA            |
+| `g2h2g`    | GPU → Host → GPU         |
+| `serial`   | Sequential CPU transfers |
+
+---
+
+## 📚 Summary
+
+HMC provides a **unified, modular, and extensible** interface for developers working on heterogeneous systems.
+It abstracts device memory operations, RDMA/UCX networking, and control synchronization under a single C++ API.
+
+* Simple interface design for CPU/GPU/NPU memory
+* Fast RDMA-based communication
+* Compatible with major accelerator SDKs
+* Optional Python bindings for high-level users
+
+---
 
 ```
-HIP clang cmath error:
-sudo apt install libstdc++-12-devs g++-12
+© 2025 SDU spgroup Holding Limited  
+All rights reserved.
 ```
-
-## Build Python Package  
-The project packages its core functionalities for Python using pybind11.
-
-To build the Python package, you first need to pull the pybind11 library to support module building:  
-- In the project root directory, execute `git submodule update --init --recursive`
-
-Then, enable Python module support and rebuild the project:  
-- Use the cmake command with the `-DBUILD_PYTHON_MOD=ON` flag, and rebuild the entire project following the previous steps.
-- The Python environment must have the build library installed: `pip install build`
-- Build the wheel package: `python -m build`
-- Install the wheel package: `pip install dist/xxx.whl`

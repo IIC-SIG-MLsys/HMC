@@ -16,9 +16,7 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
   return status_t::SUCCESS;
 }
 
-status_t UCXServer::stopListen() {
-  return status_t::SUCCESS;
-}
+status_t UCXServer::stopListen() { return status_t::SUCCESS; }
 
 std::unique_ptr<Endpoint> UCXServer::handleConnection(std::string ip,
                                                       uint16_t port) {
