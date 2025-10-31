@@ -109,7 +109,7 @@ status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size, ConnTy
 
   int ret;
   ctrl.recvCtrlInt(ip, ret);
-  if (ret = 1) return status_t::SUCCESS;
+  if (ret == 1) return status_t::SUCCESS;
   else return status_t::ERROR;
 };
 
