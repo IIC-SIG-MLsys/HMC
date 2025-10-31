@@ -149,12 +149,15 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     rdma_ack_cm_event(cm_event);
     logInfo("Client:: Connection to %s:%d established", ip.c_str(), port);
 
-    // 交换元数据：buffer的元信息交换
-    if (exchangeMetadata(endpoint) !=
-        status_t::SUCCESS) { // metadata for both side.
-      logError("Client::start_client: Failed to exchange metadata");
-      goto failed;
-    }
+    // // 交换元数据：buffer的元信息交换
+    // if (exchangeMetadata(endpoint) !=
+    //     status_t::SUCCESS) { // metadata for both side.
+    //   logError("Client::start_client: Failed to exchange metadata");
+    //   goto failed;
+    // }
+    
+    if (exchangeMetaData(ip, endpoint)!=status_t::SUCCESS) goto failed;
+
     logDebug("Client started successfully");
     endpoint->connStatus = status_t::SUCCESS;
     return endpoint;
@@ -176,80 +179,115 @@ failed:
   return nullptr;
 }
 
-status_t
-RDMAClient::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
-  // 接收服务器的元数据：发送前先准备一个接收，因为对面是阻塞先收后发。
-  struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
-  struct ibv_sge recv_sge;
+// status_t
+// RDMAClient::prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+//   // 接收服务器的元数据：发送前先准备一个接收，因为对面是阻塞先收后发。
+//   struct ibv_recv_wr recv_wr, *bad_recv_wr = nullptr;
+//   struct ibv_sge recv_sge;
 
-  memset(&recv_wr, 0, sizeof(recv_wr));
-  memset(&recv_sge, 0, sizeof(recv_sge));
+//   memset(&recv_wr, 0, sizeof(recv_wr));
+//   memset(&recv_sge, 0, sizeof(recv_sge));
 
-  recv_sge.addr = (uint64_t)&endpoint->remote_metadata_attr;
-  recv_sge.length = sizeof(endpoint->remote_metadata_attr);
-  recv_sge.lkey = endpoint->remote_metadata_mr->lkey;
+//   recv_sge.addr = (uint64_t)&endpoint->remote_metadata_attr;
+//   recv_sge.length = sizeof(endpoint->remote_metadata_attr);
+//   recv_sge.lkey = endpoint->remote_metadata_mr->lkey;
 
-  recv_wr.wr_id = 0;
-  recv_wr.sg_list = &recv_sge;
-  recv_wr.num_sge = 1;
+//   recv_wr.wr_id = 0;
+//   recv_wr.sg_list = &recv_sge;
+//   recv_wr.num_sge = 1;
 
-  // 发布接收请求
-  if (ibv_post_recv(endpoint->qp, &recv_wr, &bad_recv_wr)) {
-    logError("Client::exchange_metadata: Failed to post recv");
+//   // 发布接收请求
+//   if (ibv_post_recv(endpoint->qp, &recv_wr, &bad_recv_wr)) {
+//     logError("Client::exchange_metadata: Failed to post recv");
+//     return status_t::ERROR;
+//   }
+//   return status_t::SUCCESS;
+// }
+
+// status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
+//   /** buffer 的元信息交换 **/
+
+//   // 准备发送本地元数据
+//   struct ibv_send_wr send_wr, *bad_send_wr = nullptr;
+//   struct ibv_sge send_sge;
+
+//   memset(&send_wr, 0, sizeof(send_wr));
+//   memset(&send_sge, 0, sizeof(send_sge));
+
+//   send_sge.addr = (uint64_t)&endpoint->local_metadata_attr;
+//   send_sge.length = sizeof(endpoint->local_metadata_attr);
+//   send_sge.lkey = endpoint->local_metadata_mr->lkey;
+
+//   send_wr.wr_id = 0;
+//   send_wr.sg_list = &send_sge;
+//   send_wr.num_sge = 1;
+//   send_wr.opcode = IBV_WR_SEND;
+//   send_wr.send_flags = IBV_SEND_SIGNALED;
+
+//   // 发送本地元数据
+//   if (ibv_post_send(endpoint->qp, &send_wr, &bad_send_wr)) {
+//     logError("Client::exchange_metadata: Failed to post send");
+//     return status_t::ERROR;
+//   }
+
+//   if (prePostExchangeMetadata(endpoint) !=
+//       status_t::SUCCESS) { // metadata for both side.
+//     return status_t::ERROR;
+//   }
+//   std::this_thread::sleep_for(std::chrono::milliseconds(5));
+
+//   // 等待接收和发送完成
+//   if (endpoint->pollCompletion(2) != status_t::SUCCESS) {
+//     logError("Client::exchange_metadata: Failed to complete metadata "
+//              "exchange");
+//     return status_t::ERROR;
+//   }
+
+//   // 打印调试信息
+//   logDebug("Client::exchange_metadata: Local metadata:");
+//   endpoint->showRdmaBufferAttr(&endpoint->local_metadata_attr);
+//   logDebug("Client::exchange_metadata: Remote metadata:");
+//   endpoint->showRdmaBufferAttr(&endpoint->remote_metadata_attr);
+
+//   if (endpoint->remote_metadata_attr.address == 0) {
+//     logError("Client::exchange_metadata: Failed to get remote metadata");
+//     return status_t::ERROR;
+//   }
+//   return status_t::SUCCESS;
+// }
+
+// client side
+status_t RDMAClient::exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint) {
+  auto& ctrl = hmc::CtrlSocketManager::instance();
+
+  // 1) client 先发：把自己的 local metadata 发给 server
+  if (!ctrl.sendCtrlStruct(ip, endpoint->local_metadata_attr)) {
+    logError("[RDMAClient] exchangeMetaData: send local metadata failed");
     return status_t::ERROR;
   }
-  return status_t::SUCCESS;
-}
 
-status_t RDMAClient::exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint) {
-  /** buffer 的元信息交换 **/
+  // 2) client 后收：接收 server 的 local metadata，作为自己的 remote metadata
+  decltype(endpoint->remote_metadata_attr) server_meta{};
+  if (!ctrl.recvCtrlStruct(ip, server_meta)) {
+    logError("[RDMAClient] exchangeMetaData: recv remote metadata failed");
+    return status_t::ERROR;
+  }
+  endpoint->remote_metadata_attr = server_meta;
 
-  // 准备发送本地元数据
-  struct ibv_send_wr send_wr, *bad_send_wr = nullptr;
-  struct ibv_sge send_sge;
-
-  memset(&send_wr, 0, sizeof(send_wr));
-  memset(&send_sge, 0, sizeof(send_sge));
-
-  send_sge.addr = (uint64_t)&endpoint->local_metadata_attr;
-  send_sge.length = sizeof(endpoint->local_metadata_attr);
-  send_sge.lkey = endpoint->local_metadata_mr->lkey;
-
-  send_wr.wr_id = 0;
-  send_wr.sg_list = &send_sge;
-  send_wr.num_sge = 1;
-  send_wr.opcode = IBV_WR_SEND;
-  send_wr.send_flags = IBV_SEND_SIGNALED;
-
-  // 发送本地元数据
-  if (ibv_post_send(endpoint->qp, &send_wr, &bad_send_wr)) {
-    logError("Client::exchange_metadata: Failed to post send");
+  // 3) 基本校验（按你的结构字段酌情调整）
+  if (endpoint->remote_metadata_attr.address == 0 ||
+      endpoint->remote_metadata_attr.length == 0 ||
+      endpoint->remote_metadata_attr.key == 0) {
+    logError("[RDMAClient] exchangeMetaData: invalid remote metadata");
     return status_t::ERROR;
   }
 
-  if (prePostExchangeMetadata(endpoint) !=
-      status_t::SUCCESS) { // metadata for both side.
-    return status_t::ERROR;
-  }
-  std::this_thread::sleep_for(std::chrono::milliseconds(5));
-
-  // 等待接收和发送完成
-  if (endpoint->pollCompletion(2) != status_t::SUCCESS) {
-    logError("Client::exchange_metadata: Failed to complete metadata "
-             "exchange");
-    return status_t::ERROR;
-  }
-
-  // 打印调试信息
-  logDebug("Client::exchange_metadata: Local metadata:");
+  // 4) 打印调试信息（可选）
+  logDebug("[RDMAClient] exchangeMetaData: Local metadata:");
   endpoint->showRdmaBufferAttr(&endpoint->local_metadata_attr);
-  logDebug("Client::exchange_metadata: Remote metadata:");
+  logDebug("[RDMAClient] exchangeMetaData: Remote metadata:");
   endpoint->showRdmaBufferAttr(&endpoint->remote_metadata_attr);
 
-  if (endpoint->remote_metadata_attr.address == 0) {
-    logError("Client::exchange_metadata: Failed to get remote metadata");
-    return status_t::ERROR;
-  }
   return status_t::SUCCESS;
 }
 

@@ -42,9 +42,6 @@ public:
   virtual status_t closeEndpoint() = 0;
 
   EndpointType role;
-
-private:
-
 };
 
 /*

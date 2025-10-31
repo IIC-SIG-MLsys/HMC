@@ -7,7 +7,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
-#include <arpa/inet.h>  // for inet_pton
+#include <arpa/inet.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <unistd.h>
@@ -17,22 +17,25 @@ using namespace std;
 
 const std::string DEFAULT_SERVER_IP = "192.168.2.248";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-const std::string DEFAULT_TCP_IP = "192.168.2.248";
+const std::string DEFAULT_TCP_IP    = "192.168.2.248";
+
 std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
-const size_t buffer_size = 2048ULL * 32;
-const int device_id = 0;
-const int gpu_port = 2025;
-const int cpu_port = 2026;
-const int ctrl_port = 2027;  // TCP 控制端口
 
-int ctrl_socket_fd; // TCP 控制fd
+const size_t buffer_size = 2048ULL * 32 * 1024;
+const int device_id = 0;
+const int gpu_port  = 2025;
+const int cpu_port  = 2026;
+const int ctrl_port = 2027;
+
+int ctrl_socket_fd = -1;
 
 std::shared_ptr<ConnBuffer> gpu_buffer;
 std::shared_ptr<ConnBuffer> cpu_buffer;
 Communicator* gpu_comm;
 Communicator* cpu_comm;
+
 Memory* gpu_mem_op = new Memory(device_id);
 Memory* cpu_mem_op = new Memory(0, MemoryType::CPU);
 
@@ -43,13 +46,15 @@ struct Context {
   std::mutex* log_mutex;
 };
 
-// 使用函数封装环境变量读取逻辑
+using steady_clock_t = std::chrono::steady_clock;
+
+// 环境变量读取
 std::string get_env_or_default(const char* var_name, const std::string& default_val) {
   const char* val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
 
-// 控制函数（TCP 消息机制）
+// ---------- TCP 控制通道 ----------
 int setup_tcp_control_socket(int port, const std::string& bind_ip) {
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd == -1) {
@@ -63,8 +68,6 @@ int setup_tcp_control_socket(int port, const std::string& bind_ip) {
   sockaddr_in address;
   address.sin_family = AF_INET;
   address.sin_port = htons(port);
-
-  // 将字符串 IP 转换为 in_addr 并设置
   if (inet_pton(AF_INET, bind_ip.c_str(), &address.sin_addr) <= 0) {
     perror("Invalid bind IP address");
     exit(EXIT_FAILURE);
@@ -81,7 +84,6 @@ int setup_tcp_control_socket(int port, const std::string& bind_ip) {
   }
 
   LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":" << port;
-
   int addrlen = sizeof(address);
   int new_socket = accept(server_fd, (struct sockaddr*)&address, (socklen_t*)&addrlen);
   if (new_socket < 0) {
@@ -89,91 +91,89 @@ int setup_tcp_control_socket(int port, const std::string& bind_ip) {
     exit(EXIT_FAILURE);
   }
 
+  close(server_fd); // 监听完即可关闭
   LOG(INFO) << "TCP control connection established.";
   return new_socket;
 }
 
 void close_control_socket(int& sock) {
   if (sock >= 0) {
-      close(sock);
-      sock = -1;
-      LOG(INFO) << "Control socket closed.";
+    close(sock);
+    sock = -1;
+    LOG(INFO) << "Control socket closed.";
   }
 }
 
-void wait_for_control_message(int socket_fd) {
+bool wait_for_control_message(int socket_fd) {
   char buffer[16] = {0};
   int valread = read(socket_fd, buffer, sizeof(buffer));
-  if (valread <= 0 || std::string(buffer).find("Finished") == std::string::npos) {
-    LOG(ERROR) << "Unexpected or no control message received.";
-    exit(EXIT_FAILURE);
-  }
-  // LOG(INFO) << "Received control signal: " << buffer;
+  if (valread <= 0) return false;
+  return std::string(buffer).find("Finished") != std::string::npos;
 }
 
-// 接收函数：UHM：GPU到GPU的点对点直传
+// ---------- 各模式接收 ----------
+
+// ✅ uhm：GPU直连接收
 void recv_channel_slice_uhm(Context ctx) {
-  size_t flags;
-  if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
+  size_t flags = 0;
+  if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT, &flags)
+      != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "UHM Receive failed.";
+    LOG(ERROR) << "[UHM] Receive failed.";
   }
 }
 
-// 接收函数：Serial（分段）：被动处理每次传输结束
+// ✅ serial：分段接收
 void recv_channel_slice_serial(Context ctx) {
   const size_t chunk_size = buffer_size / 2;
-  // size_t remaining = ctx.size;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+
   for (size_t i = 0; i < num_chunks; ++i) {
-    wait_for_control_message(ctrl_socket_fd);
-    // copy逻辑有问题，暂时不用
-    // gpu_mem_op->copyDeviceToDevice(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), gpu_buffer->ptr, chunk_size); // 从gpu直接拷贝到cpu buffer
-    // remaining -= chunk_size;
+    if (!wait_for_control_message(ctrl_socket_fd)) {
+      LOG(ERROR) << "Serial mode: control message timeout.";
+      return;
+    }
   }
 }
 
-// 接收函数：G2H2G：被动处理每次传输结束
+// ✅ g2h2g：分段接收
 void recv_channel_slice_g2h2g(Context ctx) {
   const size_t chunk_size = buffer_size / 2;
-  // size_t remaining = ctx.size;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+
   for (size_t i = 0; i < num_chunks; ++i) {
-    wait_for_control_message(ctrl_socket_fd);
-    // copy逻辑有问题，暂时不用
-    // gpu_mem_op->copyHostToDevice(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), cpu_buffer->ptr, chunk_size); // 从gpu直接拷贝到cpu buffer
-    // remaining -= chunk_size;
+    if (!wait_for_control_message(ctrl_socket_fd)) {
+      LOG(ERROR) << "G2H2G mode: control message timeout.";
+      return;
+    }
   }
 }
 
-// 接收函数：无需操作，被动接收 RDMA Write
+// ✅ rdma_cpu：被动接收 RDMA write + control 信号
 void recv_channel_slice_rdma_cpu(Context ctx) {
   gpu_comm->recv(client_ip, 0, ctx.size);
   wait_for_control_message(ctrl_socket_fd);
 }
 
-// 获取运行模式
+// ---------- 模式选择 ----------
 std::string get_mode_from_args(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
-    std::string arg = argv[i];
-    if (arg == "--mode" && i + 1 < argc) {
-      std::string mode = argv[++i];
-      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" || mode == "rdma_cpu") {
+    if (string(argv[i]) == "--mode" && i + 1 < argc) {
+      string mode = argv[i + 1];
+      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" || mode == "rdma_cpu")
         return mode;
-      } else {
-        std::cerr << "Invalid mode: " << mode << ". Supported: uhm / serial / g2h2g / rdma_cpu\n";
-        exit(1);
-      }
+      cerr << "Invalid mode: " << mode << endl;
+      exit(1);
     }
   }
-  return "uhm"; // 默认模式
+  return "uhm";
 }
 
+// ---------- 主程序 ----------
 int main(int argc, char* argv[]) {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
 
-  // ./server --mode serial/uhm/g2h2g/rdma_cpu
   std::string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 
@@ -182,57 +182,42 @@ int main(int argc, char* argv[]) {
   tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
   std::mutex log_mutex;
-
   gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
   gpu_comm = new Communicator(gpu_buffer);
   cpu_comm = new Communicator(cpu_buffer);
 
-  if (gpu_comm->initServer(server_ip, gpu_port, ConnType::RDMA) != status_t::SUCCESS) {
-    LOG(ERROR) << "GPU Server init failed.";
-    return -1;
-  }
-  if (cpu_comm->initServer(server_ip, cpu_port, ConnType::RDMA) != status_t::SUCCESS) {
-    LOG(ERROR) << "CPU Server init failed.";
+  if (gpu_comm->initServer(server_ip, gpu_port, ConnType::RDMA) != status_t::SUCCESS ||
+      cpu_comm->initServer(server_ip, cpu_port, ConnType::RDMA) != status_t::SUCCESS) {
+    LOG(ERROR) << "Failed to init RDMA servers.";
     return -1;
   }
 
-  // 启动 TCP 控制连接
+  // 建立 TCP 控制连接
   ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
 
-  // 选择接收函数
+  // 模式函数选择
   void (*recv_func)(Context) = nullptr;
   if (mode == "serial") recv_func = recv_channel_slice_serial;
   else if (mode == "g2h2g") recv_func = recv_channel_slice_g2h2g;
   else if (mode == "rdma_cpu") recv_func = recv_channel_slice_rdma_cpu;
   else recv_func = recv_channel_slice_uhm;
 
+  // 主循环
   for (int power = 3; power <= 26; ++power) {
-    const size_t total_size = std::pow(2, power);
-    std::vector<uint8_t> host_data(total_size);
+    size_t total_size = size_t(1) << power;
+    std::vector<uint8_t> host_data(total_size, 0);
     void* gpu_ptr;
     gpu_mem_op->allocateBuffer(&gpu_ptr, total_size);
 
-    Context ctx = {
-        .cpu_data_ptr = host_data.data(),
-        .gpu_data_ptr = gpu_ptr,
-        .size = total_size,
-        .log_mutex = &log_mutex
-    };
-    
-    auto start_time = std::chrono::high_resolution_clock::now();
+    Context ctx = { host_data.data(), gpu_ptr, total_size, &log_mutex };
     recv_func(ctx);
-    LOG(INFO) << "1";
-    auto end_time = std::chrono::high_resolution_clock::now();
 
-    std::chrono::duration<double> duration = end_time - start_time;
-    double seconds = duration.count();
-    double throughput_MBps = (total_size / 1024.0 / 1024.0) / seconds;
-    double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
-    
-    if (mode == "rdma_cpu")  gpu_buffer->readToCpu(host_data.data(), total_size, 0);
-    else if (mode != "g2h2g") gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size); // g2h2g已经在内部分段直接写入了
-    
+    // 数据完整性验证（可选）
+    if (mode == "rdma_cpu")
+      gpu_buffer->readToCpu(host_data.data(), total_size, 0);
+    else if (mode != "g2h2g")
+      gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
@@ -243,14 +228,11 @@ int main(int argc, char* argv[]) {
     }
 
     LOG(INFO) << "[Size " << total_size << " B] "
-              << "Received in " << seconds << " s, "
-              << throughput_MBps << " MB/s ("
-              << throughput_Gbps << " Gbps), "
-              << "Data Integrity: " << (valid ? "PASS" : "FAIL");
+              << "Transfer done. Data Integrity: "
+              << (valid ? "PASS" : "FAIL");
 
     gpu_mem_op->freeBuffer(gpu_ptr);
     std::this_thread::sleep_for(std::chrono::seconds(1));
-
     LOG(INFO) << "--------------------------------------------";
   }
 

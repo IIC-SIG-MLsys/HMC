@@ -41,7 +41,7 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
     logError("Error for post_write");
     return status_t::ERROR;
   }
-  if (pollCompletion(0) != status_t::SUCCESS) {
+  if (pollCompletion(1) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
@@ -66,7 +66,7 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
     logError("Error for post_read");
     return status_t::ERROR;
   }
-  if (pollCompletion(0) != status_t::SUCCESS) {
+  if (pollCompletion(1) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
@@ -228,6 +228,8 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     logError("Client::Send: Failed to poll completion for chunk %zu",
               current_chunk);
     return status_t::ERROR;
+  } else {
+    logInfo("Client:: poll init, num_send_chunk %d", num_send_chunks);
   }
 
   while (current_chunk < num_send_chunks) {
@@ -298,7 +300,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
       return status_t::ERROR;
     }
 
-    // logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk, send_size);
+    logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk, send_size);
     current_chunk++;
   }
 
@@ -395,7 +397,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       mem_type == MemoryType::CPU ? buffer->readToCpu(dest, recv_size, bias) : buffer->readToGpu(dest, recv_size, bias);
     
       // 处理通知完成消息，防止漏掉结束消息
-      if (pollCompletion(0) != status_t::SUCCESS) {
+      if (pollCompletion(1) != status_t::SUCCESS) {
         logError("Failed to poll completion queue");
         return status_t::ERROR;
       }

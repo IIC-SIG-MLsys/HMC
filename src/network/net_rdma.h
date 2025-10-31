@@ -116,7 +116,7 @@ public:
   ~RDMAServer();
 
   status_t listen(std::string ip, uint16_t port) override;
-  std::unique_ptr<Endpoint> handleConnection(rdma_cm_id *id);
+  std::unique_ptr<RDMAEndpoint> handleConnection(rdma_cm_id *id);
 
   status_t stopListen() override;
 private:
@@ -124,8 +124,9 @@ private:
   struct rdma_cm_id *server_cm_id = NULL; // server用来监听的cm
   struct rdma_event_channel *cm_event_channel = NULL;
 
-  status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
-  status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  // status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  // status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  status_t exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
 class RDMAClient : public Client {
@@ -144,8 +145,9 @@ private:
   struct sockaddr_in sockaddr;
   std::shared_ptr<ConnBuffer> buffer;
 
-  status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
-  status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  // status_t exchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  // status_t prePostExchangeMetadata(std::unique_ptr<RDMAEndpoint> &endpoint);
+  status_t exchangeMetaData(std::string ip, std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
 } // namespace hmc

@@ -40,6 +40,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <utility> // For std::pair
+#include <mutex>
 
 namespace hmc {
 
@@ -67,6 +68,91 @@ public:
 
 enum class ConnType { RDMA, UCX };
 
+/* Socket Control Manager */
+enum CtrlMsgType : uint16_t {
+  CTRL_INT = 0x01,
+  CTRL_STRUCT = 0x02,
+};
+
+struct CtrlMsgHeader {
+  uint16_t type;
+  uint16_t flags;
+  uint32_t length; // payload lens
+};
+static_assert(sizeof(CtrlMsgHeader) == 8);
+
+class CtrlSocketManager {
+public:
+  static CtrlSocketManager& instance();
+
+  CtrlSocketManager(const CtrlSocketManager&) = delete;
+  CtrlSocketManager& operator=(const CtrlSocketManager&) = delete;
+
+  bool is_server_{false};
+  bool isServer() const { return is_server_; }
+
+  // --- Server side ---
+  bool startServer(const std::string& bindIp, uint16_t port);
+  void stopServer();
+
+  // --- Client side ---
+  int getCtrlSockFd(const std::string& ip, uint16_t port);
+
+  // --- Message APIs ---
+  bool sendCtrlMsg(const std::string& ip, CtrlMsgType type, const void* payload, size_t len, uint16_t flags = 0);
+  bool recvCtrlMsg(const std::string& ip, CtrlMsgHeader& hdr, std::vector<uint8_t>& payload);
+
+  bool sendCtrlInt(const std::string& ip, int value);
+  bool recvCtrlInt(const std::string& ip, int& value);
+
+  template <typename T>
+  bool sendCtrlStruct(const std::string& ip, const T& obj);
+
+  template <typename T>
+  bool recvCtrlStruct(const std::string& ip, T& obj);
+
+  void closeConnection(const std::string& ip);
+  void closeAll();
+
+  ~CtrlSocketManager();
+
+private:
+  CtrlSocketManager();
+
+  void acceptLoop();
+
+  int createSocket(const std::string& ip, uint16_t port);
+  static bool sendAll(int fd, const void* buf, size_t len);
+  static bool recvAll(int fd, void* buf, size_t len);
+
+private:
+  std::unordered_map<std::string, int> ip_to_fd_;
+  std::mutex mu_;
+
+  int listen_fd_{-1};
+  std::thread listener_thread_;
+  std::atomic<bool> running_{false};
+  uint16_t default_port_ = 5555;
+};
+
+template <typename T>
+bool CtrlSocketManager::sendCtrlStruct(const std::string& ip, const T& obj) {
+  static_assert(std::is_trivially_copyable<T>::value, "T must be POD");
+  return sendCtrlMsg(ip, CTRL_STRUCT, &obj, sizeof(T));
+}
+
+template <typename T>
+bool CtrlSocketManager::recvCtrlStruct(const std::string& ip, T& obj) {
+  CtrlMsgHeader hdr;
+  std::vector<uint8_t> payload;
+  if (!recvCtrlMsg(ip, hdr, payload)) return false;
+  if (hdr.type != CTRL_STRUCT || payload.size() != sizeof(T)) return false;
+  std::memcpy(&obj, payload.data(), sizeof(T));
+  return true;
+}
+
+
+/* Communicator */
 class Communicator {
 private:
   std::shared_ptr<ConnBuffer> buffer;

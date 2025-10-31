@@ -19,25 +19,28 @@
 
 using namespace hmc;
 using namespace std;
-using namespace std::chrono;
+
 const std::string DEFAULT_SERVER_IP = "192.168.2.236";
 const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-const std::string DEFAULT_TCP_IP = "10.102.0.241";
+const std::string DEFAULT_TCP_IP    = "10.102.0.241";
+
 std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
-size_t buffer_size = 2048ULL * 32;
+
+size_t buffer_size = 2048ULL * 32 * 1024;
 const int device_id = 0;
-const int gpu_port = 2025;
-const int cpu_port = 2026;
+const int gpu_port  = 2025;
+const int cpu_port  = 2026;
 const int ctrl_port = 2027;
 
-int ctrl_sock = -1; // TCP 控制sock
+int ctrl_sock = -1;
 
 Communicator *gpu_comm;
 Communicator *cpu_comm;
 std::shared_ptr<ConnBuffer> gpu_buffer;
 std::shared_ptr<ConnBuffer> cpu_buffer;
+
 Memory* gpu_mem_op = new Memory(device_id);
 Memory* cpu_mem_op = new Memory(0, MemoryType::CPU);
 
@@ -51,13 +54,14 @@ struct Context {
 long long total_time = 0;
 std::mutex log_mutex;
 
-// 使用函数封装环境变量读取逻辑
+using steady_clock_t = std::chrono::steady_clock;
+
+// -------------------- 控制通道 --------------------
 std::string get_env_or_default(const char* var_name, const std::string& default_val) {
   const char* val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
 
-// ===== TCP 连接 =====
 bool connect_control_server(const std::string& server_ip, int ctrl_port = 9099) {
   ctrl_sock = socket(AF_INET, SOCK_STREAM, 0);
   if (ctrl_sock < 0) {
@@ -108,12 +112,13 @@ void close_control_connection() {
   }
 }
 
+// -------------------- 发送模式 --------------------
 void send_channel_slice_uhm(Context ctx) {
   total_time = 0;
-  auto start = high_resolution_clock::now();
+  auto start = steady_clock_t::now();
   auto status = gpu_comm->sendDataTo(server_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT);
-  auto end = high_resolution_clock::now();
-  total_time = duration_cast<microseconds>(end - start).count();
+  auto end   = steady_clock_t::now();
+  total_time = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
@@ -128,25 +133,19 @@ void send_channel_slice_serial(Context ctx) {
   total_time = 0;
 
   for (size_t i = 0; i < num_chunks; ++i) {
-    auto start1 = high_resolution_clock::now();
-    size_t send_size = min(chunk_size, remaining);
-    gpu_buffer->writeFromGpu(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size, 0); // 从gpu直接拷贝到gpu buffer
-    auto end1 = high_resolution_clock::now();
-    auto start2 = high_resolution_clock::now();
-    // LOG(INFO) << ctx.size << " " << ctx.size-remaining << " " << send_size;
-    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA); // 从gpu buffer 发送到对方 gpu buffer
+    size_t send_size = std::min(chunk_size, remaining);
+    auto start = steady_clock_t::now();
+    gpu_buffer->writeFromGpu(static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size, 0);
+    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    auto end = steady_clock_t::now();
+
     remaining -= send_size;
-    auto end2 = high_resolution_clock::now();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-    if (!send_control_message("Finished")) {
-      std::cerr << "Send control message failed" << std::endl;
-    }
-
-    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    send_control_message("Finished");
   }
 }
 
-// 分块的gpu->cpu->cpu->gpu
 void send_channel_slice_g2h2g(Context ctx) {
   void* host_buffer;
   cpu_mem_op->allocateBuffer(&host_buffer, ctx.size);
@@ -157,50 +156,42 @@ void send_channel_slice_g2h2g(Context ctx) {
   total_time = 0;
 
   for (size_t i = 0; i < num_chunks; ++i) {
-    auto start1 = high_resolution_clock::now();
-    size_t send_size = min(chunk_size, remaining);
-    gpu_mem_op->copyDeviceToHost(cpu_buffer->ptr, static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size); // 从gpu直接拷贝到cpu buffer
-    auto end1 = high_resolution_clock::now();
-    auto start2 = high_resolution_clock::now();
-    // LOG(INFO) << ctx.size << " " << ctx.size-remaining << " " << send_size;
-    cpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA); // 从cpu buffer 发送到对方 cpu buffer
+    size_t send_size = std::min(chunk_size, remaining);
+    auto start = steady_clock_t::now();
+    gpu_mem_op->copyDeviceToHost(cpu_buffer->ptr, static_cast<char*>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size);
+    cpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    auto end = steady_clock_t::now();
+
     remaining -= send_size;
-    auto end2 = high_resolution_clock::now();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-    if (!send_control_message("Finished")) {
-      std::cerr << "Send control message failed" << std::endl;
-    }
-
-    total_time += (duration_cast<microseconds>(end1 - start1).count() + duration_cast<microseconds>(end2 - start2).count()); // 拷贝时延+传输时延
+    send_control_message("Finished");
   }
 
   cpu_mem_op->freeBuffer(host_buffer);
 }
 
-// 主动 RDMA Write
 void send_channel_slice_rdma_cpu(Context ctx) {
   const size_t chunk_size = buffer_size / 2;
   size_t remaining = ctx.size;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
   total_time = 0;
-  
+
   for (size_t i = 0; i < num_chunks; ++i) {
-    size_t send_size = min(chunk_size, remaining);
-    gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size-remaining);
-
-    auto start = high_resolution_clock::now();
+    size_t send_size = std::min(chunk_size, remaining);
+    gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size - remaining);
+    auto start = steady_clock_t::now();
     gpu_comm->send(server_ip, 0, send_size, ConnType::RDMA);
+    auto end = steady_clock_t::now();
+
     remaining -= send_size;
-    auto end = high_resolution_clock::now();
-
-    total_time += duration_cast<microseconds>(end - start).count();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   }
 
-  if (!send_control_message("Finished")) {
-    std::cerr << "Send control message failed" << std::endl;
-  }
+  send_control_message("Finished");
 }
 
+// -------------------- 主程序 --------------------
 std::string get_mode_from_args(int argc, char* argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
@@ -217,7 +208,6 @@ int main(int argc, char* argv[]) {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
 
-  // ./client --mode serial/uhm/g2h2g/rdma_cpu
   string mode = get_mode_from_args(argc, argv);
   LOG(INFO) << "Running in mode: " << mode;
 
@@ -233,13 +223,12 @@ int main(int argc, char* argv[]) {
   gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
   cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);
 
-  // wait server start
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
   int retry_count = 0;
   while (!connect_control_server(tcp_server_ip, ctrl_port)) {
     if (retry_count > 5) {
-      std::cerr << "Failed to connect control server :"<< tcp_server_ip << std::endl;
+      std::cerr << "Failed to connect control server :" << tcp_server_ip << std::endl;
       return -1;
     }
     retry_count++;
@@ -253,36 +242,39 @@ int main(int argc, char* argv[]) {
   else send_func = send_channel_slice_uhm;
 
   ofstream csv_file("performanceTest_client.csv", ios::app);
-  if (csv_file.tellp() == 0) {
+  if (csv_file.tellp() == 0)
     csv_file << "Mode,Data Size (MB),Time(us),Bandwidth(Gbps)\n";
-  }
   csv_file.close();
 
   sleep(3);
 
-  for (int power = 2; power <= 26; ++power) { // 暂时有bug，发送端多发一次，即接受端的缓冲区大一些做测试，这里是2，服务端为3
-    size_t total_size = pow(2, power);
+  for (int power = 2; power <= 26; ++power) {
+    size_t total_size = (size_t)1 << power;
     std::vector<uint8_t> host_data(total_size, 'A');
 
     void* device_ptr;
     gpu_mem_op->allocateBuffer(&device_ptr, total_size);
     gpu_mem_op->copyHostToDevice(device_ptr, host_data.data(), total_size);
 
-    Context ctx = {.cpu_data_ptr = host_data.data(), .gpu_data_ptr = device_ptr, .size = total_size, .log_mutex = &log_mutex};
-    
+    Context ctx = {.cpu_data_ptr = host_data.data(), .gpu_data_ptr = device_ptr,
+                   .size = total_size, .log_mutex = &log_mutex};
+
     send_func(ctx);
 
-    double throughput_MBps = (total_size / 1024.0 / 1024.0) / (total_time / 1e6);
-    double throughput_Gbps = throughput_MBps * 1024.0 * 1024.0 * 8 / 1e9;
+    double time_s = total_time / 1e6;
+    double gbps   = (total_size * 8.0) / time_s / 1e9;
+    double MBps   = (total_size / time_s) / (1024.0 * 1024.0);
 
-    LOG(INFO) << "[Data Size " << ( total_size) << " B] "
-              << total_time << " us, "
-              << throughput_MBps << " MB/s, "
-              << throughput_Gbps << " Gbps";
+    LOG(INFO) << "[Mode: " << mode << "] "
+              << (mode == "uhm" || mode == "rdma_cpu" ? "[Network only]" : "[End-to-end]")
+              << " Data Size: " << total_size << " B, "
+              << "Time: " << total_time << " us, "
+              << MBps << " MiB/s, " << gbps << " Gbps";
 
     ofstream file("performanceTest_client.csv", ios::app);
     if (file.is_open()) {
-      file << mode << "," << power << "," << total_time << "," << throughput_Gbps << "\n";
+      double size_MB = total_size / 1024.0 / 1024.0;
+      file << mode << "," << size_MB << "," << total_time << "," << gbps << "\n";
       file.close();
     }
 
