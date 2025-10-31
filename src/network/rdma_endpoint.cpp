@@ -228,8 +228,6 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     logError("Client::Send: Failed to poll completion for chunk %zu",
               current_chunk);
     return status_t::ERROR;
-  } else {
-    logInfo("Client:: poll init, num_send_chunk %d", num_send_chunks);
   }
 
   while (current_chunk < num_send_chunks) {
@@ -300,7 +298,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
       return status_t::ERROR;
     }
 
-    logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk, send_size);
+    // logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk, send_size);
     current_chunk++;
   }
 
