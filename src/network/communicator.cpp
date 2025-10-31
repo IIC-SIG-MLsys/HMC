@@ -80,31 +80,37 @@ status_t Communicator::recvDataFrom(std::string ip, void *recv_buf, size_t buf_s
 };
 
 status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
+  auto& ctrl = hmc::CtrlSocketManager::instance();
   status_t sret = checkConn(ip, connType);
   if ( sret != status_t::SUCCESS) {
     return sret;
   }
 
-  return conn_manager->withEndpoint(
+  sret = conn_manager->withEndpoint(
       ip, [ptr_bias, size](Endpoint *ep) -> status_t {
         if (!ep)
           return status_t::ERROR;
         return ep->writeData(ptr_bias, size); // 传递返回状态
       });
+  if (sret != status_t::SUCCESS) {
+    ctrl.sendCtrlInt(ip, 1); // SUCCESS 1, FALSE 2
+  } else {
+    ctrl.sendCtrlInt(ip, 2);
+  }
+  return sret;
 };
 
 status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size, ConnType connType) {
+  auto& ctrl = hmc::CtrlSocketManager::instance();
   status_t sret = checkConn(ip, connType);
   if ( sret != status_t::SUCCESS) {
     return sret;
   }
 
-  return conn_manager->withEndpoint(
-      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
-        if (!ep)
-          return status_t::ERROR;
-        return ep->recvData(ptr_bias, size); // 传递返回状态, 阻塞接口
-      });
+  int ret;
+  ctrl.recvCtrlInt(ip, ret);
+  if (ret = 1) return status_t::SUCCESS;
+  else return status_t::ERROR;
 };
 
 status_t Communicator::connectTo(std::string ip, uint16_t port, ConnType connType) {

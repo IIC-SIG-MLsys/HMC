@@ -177,19 +177,28 @@ void send_channel_slice_rdma_cpu(Context ctx) {
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
   total_time = 0;
 
+  size_t sent_offset = 0;
+
   for (size_t i = 0; i < num_chunks; ++i) {
     size_t send_size = std::min(chunk_size, remaining);
-    gpu_buffer->writeFromGpu(ctx.gpu_data_ptr, send_size, ctx.size - remaining);
+
+    gpu_buffer->writeFromGpu(
+        static_cast<char*>(ctx.gpu_data_ptr) + sent_offset,
+        send_size,
+        0
+    );
+
     auto start = steady_clock_t::now();
     gpu_comm->send(server_ip, 0, send_size, ConnType::RDMA);
     auto end = steady_clock_t::now();
 
+    sent_offset += send_size;
     remaining -= send_size;
     total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   }
-
   send_control_message("Finished");
 }
+
 
 // -------------------- 主程序 --------------------
 std::string get_mode_from_args(int argc, char* argv[]) {
@@ -248,7 +257,7 @@ int main(int argc, char* argv[]) {
 
   sleep(3);
 
-  for (int power = 2; power <= 26; ++power) {
+  for (int power = 10; power <= 30; ++power) {
     size_t total_size = (size_t)1 << power;
     std::vector<uint8_t> host_data(total_size, 'A');
 

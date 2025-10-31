@@ -40,12 +40,10 @@ public:
 
   status_t writeData(size_t data_bias, size_t size) override;
   status_t readData(size_t data_bias, size_t size) override;
-  status_t recvData(size_t data_bias, size_t size) override;
 
-  status_t writeDataNB(size_t data_bias, size_t size) override;
-  status_t readDataNB(size_t data_bias, size_t size) override;
-  status_t recvDataNB(size_t data_bias, size_t size) override;  
-  status_t pollCompletion(int num_completions_to_process) override;
+  status_t writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
+  status_t readDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
+  status_t waitWrId(uint64_t wr_id) override;
 
   status_t uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) override;
   status_t uhm_recv(void *output_buffer, const size_t buffer_size,
@@ -60,18 +58,16 @@ public:
   void cleanRdmaResources();
 
   status_t postSend(void *addr, size_t length, struct ibv_mr *mr,
-                    bool signaled = true);
-  status_t postRecv(void *addr, size_t length, struct ibv_mr *mr);
+                    uint64_t wr_id, bool signaled = true);
+  status_t postRecv(void *addr, size_t length, struct ibv_mr *mr, uint64_t wr_id);
   status_t postWrite(void *local_addr, void *remote_addr, size_t length,
-                     struct ibv_mr *local_mr, uint32_t remote_key,
+                     struct ibv_mr *local_mr, uint32_t remote_key, uint64_t wr_id,
                      bool signaled);
   status_t postRead(void *local_addr, void *remote_addr, size_t length,
-                    struct ibv_mr *local_mr, uint32_t remote_key,
+                    struct ibv_mr *local_mr, uint32_t remote_key, uint64_t wr_id,
                     bool signaled);
 
 public:
-  // void *buffer = NULL; // register
-  // size_t buffer_size = 0;
   std::shared_ptr<ConnBuffer> buffer;
   bool is_buffer_ok = false;
   status_t connStatus = status_t::ERROR; // 连接成功后转为SUCCESS 
@@ -107,6 +103,9 @@ public:
   uint16_t cq_capacity = 16;
   uint16_t max_sge = 2;
   uint16_t max_wr = 8;
+
+private:
+  std::atomic<uint64_t> next_wr_id_{1};
 };
 
 class RDMAServer : public Server {

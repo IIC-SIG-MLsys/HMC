@@ -37,23 +37,25 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
     logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld", buffer->buffer_size, data_bias+size);
     return status_t::ERROR;
   }
-  if (writeDataNB(data_bias, size) != status_t::SUCCESS) {
+  uint64_t wr_id;
+  if (writeDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_write");
     return status_t::ERROR;
   }
-  if (pollCompletion(1) != status_t::SUCCESS) {
+  if (waitWrId(wr_id) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size) {
+status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id) {
   void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
   return postWrite(localAddr, remoteAddr, size, buffer_mr,
-                   remote_metadata_attr.key, true);
+                   remote_metadata_attr.key, *wr_id, true);
 }
 
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
@@ -62,23 +64,25 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
     logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld", buffer->buffer_size, data_bias+size);
     return status_t::ERROR;
   }
-  if (readDataNB(data_bias, size) != status_t::SUCCESS) {
+  uint64_t wr_id;
+  if (readDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_read");
     return status_t::ERROR;
   }
-  if (pollCompletion(1) != status_t::SUCCESS) {
+  if (waitWrId(wr_id) != status_t::SUCCESS) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size) {
+status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size, uint64_t* wr_id) {
   void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
   return postRead(localAddr, remoteAddr, size, buffer_mr,
-                  remote_metadata_attr.key, true);
+                  remote_metadata_attr.key, *wr_id, true);
 }
 
 status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
@@ -109,95 +113,6 @@ status_t RDMAEndpoint::deRegisterMemory(struct ibv_mr *mr) {
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::pollCompletion(int num_completions_to_process) {
-  // 检查 cq 是否为空指针
-  if (cq == nullptr) {
-    logError("Completion queue is null, check if endpoint is ok?");
-    return status_t::ERROR;
-  }
-
-  // 分配足够的空间来存储多个完成事件
-  const int max_wcs = cq_capacity; // 可根据实际情况调整大小
-  std::vector<struct ibv_wc> wcs(max_wcs);
-
-  if (num_completions_to_process == 0) { // 为0表示一次处理所有能处理的事件
-    int poll_result;
-    do {
-      poll_result = ibv_poll_cq(cq, max_wcs, wcs.data());
-    } while (poll_result == 0);
-    return status_t::SUCCESS;
-  }
-
-  // 指定个数，则按照个数处理
-  int total_processed = 0;
-  while (total_processed < num_completions_to_process) {
-    // 尽可能多地获取完成事件
-    int num_completions = ibv_poll_cq(cq, max_wcs, wcs.data());
-
-    if (num_completions < 0) {
-      logError("Failed to poll completion queue");
-      return status_t::ERROR;
-    }
-
-    for (int i = 0;
-         i < num_completions && total_processed < num_completions_to_process;
-         ++i) {
-      struct ibv_wc &wc = wcs[i];
-
-      if (wc.status != IBV_WC_SUCCESS) {
-        switch (wc.status) {
-        case IBV_WC_LOC_LEN_ERR:
-          logError("WC status: Local Length Error");
-          break;
-        case IBV_WC_LOC_QP_OP_ERR:
-          logError("WC status: Local QP Operation Error");
-          break;
-        case IBV_WC_LOC_EEC_OP_ERR:
-          logError("WC status: Local EE Context Operation Error");
-          break;
-        case IBV_WC_LOC_PROT_ERR:
-          logError("WC status: Local Protection Error");
-          break;
-        case IBV_WC_WR_FLUSH_ERR:
-          logError("WC status: Work Request Flushed Error");
-          break;
-        case IBV_WC_MW_BIND_ERR:
-          logError("WC status: Memory Window Binding Error");
-          break;
-        case IBV_WC_REM_ACCESS_ERR:
-          logError("WC status: Remote Access Error");
-          break;
-        case IBV_WC_REM_OP_ERR:
-          logError("WC status: Remote Operation Error");
-          break;
-        case IBV_WC_RNR_RETRY_EXC_ERR:
-          logError("WC status: RNR Retry Counter Exceeded");
-          break;
-        case IBV_WC_RETRY_EXC_ERR:
-          logError("WC status: Transport Retry Counter Exceeded");
-          break;
-        default:
-          logError("WC status: Unknown error (%d)", wc.status);
-          break;
-        }
-        return status_t::ERROR;
-      } else {
-        // 处理成功的完成事件
-        // logDebug("Completion event processed successfully");
-      }
-
-      total_processed++;
-    }
-
-    // 如果没有更多的完成事件，则退出循环
-    if (num_completions == 0) {
-      break;
-    }
-  }
-
-  return status_t::SUCCESS;
-}
-
 status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) {
   status_t ret;
 
@@ -216,7 +131,8 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
 
   void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state);
   void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address);
-  ret = postWrite(localAddr, remoteAddr, sizeof(uhm_buffer_state), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);
+  uint64_t wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+  ret = postWrite(localAddr, remoteAddr, sizeof(uhm_buffer_state), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, wr_id, true);
   if (ret != status_t::SUCCESS) {
     logError("Client::Send: Failed to post write buffer state");
     return ret;
@@ -224,7 +140,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
   // 首次缓冲区拷贝
   mem_type == MemoryType::CPU ? buffer->writeFromCpu(input_buffer, send_size, 0) : buffer->writeFromGpu(input_buffer, send_size, 0);
   // 处理发送事件
-  if (pollCompletion(1) != status_t::SUCCESS) {
+  if (waitWrId(wr_id) != status_t::SUCCESS) {
     logError("Client::Send: Failed to poll completion for chunk %zu",
               current_chunk);
     return status_t::ERROR;
@@ -264,7 +180,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     send_size = std::min(half_buffer_size, remaining);
 
     // 可写，写当前块到远端
-    ret = writeDataNB(chunk_index * half_buffer_size, send_size);
+    ret = writeDataNB(chunk_index * half_buffer_size, send_size, &wr_id);
     if (ret != status_t::SUCCESS) {
       logError("Client::Send: Failed to post write data for chunk %zu", current_chunk);
       return ret;
@@ -275,7 +191,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_READ;
     void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) + chunk_index * sizeof(UHM_STATE_TYPE);
     void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) + chunk_index * sizeof(UHM_STATE_TYPE);
-    ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);
+    ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, wr_id, true);
     if (ret != status_t::SUCCESS) {
       logError("Client::Send: Failed to post write buffer state");
       return ret;
@@ -293,7 +209,7 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags, Mem
     }
 
     // 等待向远端写操作完成
-    if (pollCompletion(2) != status_t::SUCCESS) {
+    if (waitWrId(wr_id) != status_t::SUCCESS) {
       logError("Client::Send: Failed to poll completion for chunk %zu", current_chunk);
       return status_t::ERROR;
     }
@@ -352,7 +268,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       }
   }
   // logDebug("recv_flags %zu, current chunk %zu, num_recv_chunks %zu\n", *recv_flags, current_chunk, num_recv_chunks);
-
+  uint64_t wr_id;
   while (current_chunk < num_recv_chunks) {
     chunk_index = current_chunk % 2;
     // logDebug("current_chunk %zu, chunk_index %zu, uhm_buffer_state.state[chunk_index] %u\n", current_chunk, chunk_index, uhm_buffer_state.state[chunk_index]);
@@ -362,7 +278,8 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       this->uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_WRITE; 
       void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) + chunk_index * sizeof(UHM_STATE_TYPE);
       void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) + chunk_index * sizeof(UHM_STATE_TYPE);
-      ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, true);   
+      wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+      ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE), uhm_buffer_state_mr, remote_metadata_attr.uhm_buffer_state_key, wr_id, true);   
       if (ret != status_t::SUCCESS) {
         logError("Server::Recv: Failed to post write buffer state");
         return ret;
@@ -395,7 +312,7 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
       mem_type == MemoryType::CPU ? buffer->readToCpu(dest, recv_size, bias) : buffer->readToGpu(dest, recv_size, bias);
     
       // 处理通知完成消息，防止漏掉结束消息
-      if (pollCompletion(1) != status_t::SUCCESS) {
+      if (waitWrId(wr_id) != status_t::SUCCESS) {
         logError("Failed to poll completion queue");
         return status_t::ERROR;
       }
@@ -407,30 +324,6 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
   };
 
   return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::recvData(size_t data_bias, size_t size) {
-    if (data_bias + size > buffer->buffer_size) {
-        logError("Invalid data bias and size: buffer_size %zu, data_bias+size %zu",
-                 buffer->buffer_size, data_bias + size);
-        return status_t::ERROR;
-    }
-    // post Recv
-    if (recvDataNB(data_bias, size) != status_t::SUCCESS) {
-        logError("Error when posting receive");
-        return status_t::ERROR;
-    }
-    // 等待 Recv 完成
-    if (pollCompletion(1) != status_t::SUCCESS) {
-        logError("Error waiting for receiveData finished");
-        return status_t::ERROR;
-    }
-    return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::recvDataNB(size_t data_bias, size_t size) {
-    void* localAddr = static_cast<char*>(buffer->ptr) + data_bias;
-    return postRecv(localAddr, static_cast<uint32_t>(size), buffer_mr);
 }
 
 status_t RDMAEndpoint::setupBuffers() {
@@ -478,7 +371,7 @@ status_t RDMAEndpoint::setupBuffers() {
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
+status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr, uint64_t wr_id,
                                 bool signaled) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
@@ -490,7 +383,7 @@ status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
   sge.length = length;
   sge.lkey = mr->lkey;
 
-  wr.wr_id = 0;
+  wr.wr_id = wr_id;
   wr.sg_list = &sge;
   wr.num_sge = 1;
   wr.opcode = IBV_WR_SEND;
@@ -503,7 +396,7 @@ status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr) {
+status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr, uint64_t wr_id) {
   struct ibv_recv_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -514,7 +407,7 @@ status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr) {
   sge.length = length;
   sge.lkey = mr->lkey;
 
-  wr.wr_id = 0;
+  wr.wr_id = wr_id;
   wr.sg_list = &sge;
   wr.num_sge = 1;
 
@@ -527,7 +420,7 @@ status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr) {
 
 status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
                                  size_t length, struct ibv_mr *local_mr,
-                                 uint32_t remote_key, bool signaled) {
+                                 uint32_t remote_key, uint64_t wr_id, bool signaled) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -538,7 +431,7 @@ status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
   sge.length = length;
   sge.lkey = local_mr->lkey;
 
-  wr.wr_id = 0;
+  wr.wr_id = wr_id;
   wr.sg_list = &sge;
   wr.num_sge = 1;
   wr.opcode = IBV_WR_RDMA_WRITE;
@@ -558,7 +451,7 @@ status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
 
 status_t RDMAEndpoint::postRead(void *local_addr, void *remote_addr,
                                 size_t length, struct ibv_mr *local_mr,
-                                uint32_t remote_key, bool signaled) {
+                                uint32_t remote_key, uint64_t wr_id, bool signaled) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -569,7 +462,7 @@ status_t RDMAEndpoint::postRead(void *local_addr, void *remote_addr,
   sge.length = length;
   sge.lkey = local_mr->lkey;
 
-  wr.wr_id = 0;
+  wr.wr_id = wr_id;
   wr.sg_list = &sge;
   wr.num_sge = 1;
   wr.opcode = IBV_WR_RDMA_READ;
@@ -634,5 +527,35 @@ void RDMAEndpoint::cleanRdmaResources() {
 
   // 注意 buffer 的清理工作由外部的ConnMemory维护，Endpoint不对buffer进行处理
 }
+
+status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
+    if (!cq) {
+        logError("waitForWrId: CQ is null");
+        return status_t::ERROR;
+    }
+
+    const int max_wcs = cq_capacity;
+    std::vector<ibv_wc> wcs(max_wcs);
+
+    while (true) {
+        int n = ibv_poll_cq(cq, max_wcs, wcs.data());
+        if (n < 0) {
+            logError("waitWrId: poll CQ failed");
+            return status_t::ERROR;
+        }
+        if (n == 0) continue;
+
+        for (int i = 0; i < n; ++i) {
+            if (wcs[i].status != IBV_WC_SUCCESS) {
+                logError("waitWrId: CQE error, status %d", wcs[i].status);
+                return status_t::ERROR;
+            }
+            if (wcs[i].wr_id == target_wr_id) {
+                return status_t::SUCCESS;
+            }
+        }
+    }
+}
+
 
 } // namespace hmc

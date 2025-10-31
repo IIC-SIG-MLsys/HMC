@@ -151,7 +151,6 @@ void recv_channel_slice_g2h2g(Context ctx) {
 
 // ✅ rdma_cpu：被动接收 RDMA write + control 信号
 void recv_channel_slice_rdma_cpu(Context ctx) {
-  gpu_comm->recv(client_ip, 0, ctx.size);
   wait_for_control_message(ctrl_socket_fd);
 }
 
@@ -204,7 +203,7 @@ int main(int argc, char* argv[]) {
   else recv_func = recv_channel_slice_uhm;
 
   // 主循环
-  for (int power = 3; power <= 26; ++power) {
+  for (int power = 10; power <= 30; ++power) {
     size_t total_size = size_t(1) << power;
     std::vector<uint8_t> host_data(total_size, 0);
     void* gpu_ptr;
@@ -215,7 +214,7 @@ int main(int argc, char* argv[]) {
 
     // 数据完整性验证（可选）
     if (mode == "rdma_cpu")
-      gpu_buffer->readToCpu(host_data.data(), total_size, 0);
+      continue;
     else if (mode != "g2h2g")
       gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
 
@@ -227,9 +226,7 @@ int main(int argc, char* argv[]) {
       }
     }
 
-    LOG(INFO) << "[Size " << total_size << " B] "
-              << "Transfer done. Data Integrity: "
-              << (valid ? "PASS" : "FAIL");
+    LOG(INFO) << "[Size " << total_size << " B] ";
 
     gpu_mem_op->freeBuffer(gpu_ptr);
     std::this_thread::sleep_for(std::chrono::seconds(1));

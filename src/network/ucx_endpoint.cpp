@@ -17,23 +17,15 @@ status_t UCXEndpoint::readData(size_t data_bias, size_t size) {
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::recvData(size_t data_bias, size_t size) {
+status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id){
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::writeDataNB(size_t data_bias, size_t size){
+status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size, uint64_t* wr_id){
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::readDataNB(size_t data_bias, size_t size){
-  return status_t::SUCCESS;
-}
-
-status_t UCXEndpoint::recvDataNB(size_t data_bias, size_t size){
-  return status_t::SUCCESS;
-}
-
-status_t UCXEndpoint::pollCompletion(int num_completions_to_process){
+status_t UCXEndpoint::waitWrId(uint64_t wr_id){
   return status_t::SUCCESS;
 }
 

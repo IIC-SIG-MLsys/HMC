@@ -17,12 +17,10 @@ public:
 
   status_t writeData(size_t data_bias, size_t size) override;
   status_t readData(size_t data_bias, size_t size) override;
-  status_t recvData(size_t data_bias, size_t size) override;
 
-  status_t writeDataNB(size_t data_bias, size_t size) override;
-  status_t readDataNB(size_t data_bias, size_t size) override;
-  status_t recvDataNB(size_t data_bias, size_t size) override;
-  status_t pollCompletion(int num_completions_to_process) override;
+  status_t writeDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
+  status_t readDataNB(size_t data_bias, size_t size, uint64_t* wr_id) override;
+  status_t waitWrId(uint64_t wr_id) override;
 
   status_t uhm_send(void *input_buffer, const size_t send_flags, MemoryType mem_type) override;
   status_t uhm_recv(void *output_buffer, const size_t buffer_size,
