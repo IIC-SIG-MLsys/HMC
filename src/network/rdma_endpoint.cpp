@@ -440,9 +440,13 @@ status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
   wr.wr.rdma.rkey = remote_key;
 
   if (ibv_post_send(qp, &wr, &bad_wr)) {
-    logError("Failed to post RDMA write");
-    if (bad_wr) {
-      fprintf(stderr, "Failed wr_id: %lu\n", bad_wr->wr_id);
+    int e = errno;
+    logError("ibv_post_send failed: errno=%d (%s)", e, strerror(e));
+    if (bad_wr) fprintf(stderr, "Failed wr_id: %lu\n", bad_wr->wr_id);
+
+    ibv_qp_attr attr; ibv_qp_init_attr init_attr;
+    if (ibv_query_qp(qp, &attr, IBV_QP_STATE, &init_attr) == 0) {
+      logError("QP state after failure: %d", attr.qp_state);
     }
     return status_t::ERROR;
   }
