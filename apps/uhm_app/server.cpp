@@ -218,16 +218,16 @@ int main(int argc, char* argv[]) {
     else if (mode != "g2h2g")
       gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
 
-    bool valid;
+    bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
       if (host_data[i] != 'A') {
         valid = false;
         break;
       }
-      valid = true;
     }
 
-    LOG(INFO) << "[Size " << total_size << " B] ";
+    LOG(INFO) << "[Size " << total_size << " B] Data Integrity: "
+              << (valid ? "PASS" : "FAIL");
 
     gpu_mem_op->freeBuffer(gpu_ptr);
     std::this_thread::sleep_for(std::chrono::seconds(1));
