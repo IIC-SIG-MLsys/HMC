@@ -218,12 +218,13 @@ int main(int argc, char* argv[]) {
     else if (mode != "g2h2g")
       gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
 
-    bool valid = true;
+    bool valid;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
       if (host_data[i] != 'A') {
         valid = false;
         break;
       }
+      valid = true;
     }
 
     LOG(INFO) << "[Size " << total_size << " B] ";
