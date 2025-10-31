@@ -12,10 +12,10 @@ namespace hmc {
 // Factory function to create Server based on configuration
 std::unique_ptr<Server>
 createServer(ConnType serverType, std::shared_ptr<ConnBuffer> buffer,
-             std::shared_ptr<ConnManager> conn_manager) {
+             std::shared_ptr<ConnManager> conn_manager, size_t num_chs) {
   switch (serverType) {
   case ConnType::RDMA:
-    return std::make_unique<RDMAServer>(buffer, conn_manager);
+    return std::make_unique<RDMAServer>(buffer, conn_manager, num_chs);
   case ConnType::UCX:
     return std::make_unique<UCXServer>(conn_manager); // TODO:
   default:
@@ -23,14 +23,14 @@ createServer(ConnType serverType, std::shared_ptr<ConnBuffer> buffer,
   }
 }
 
-ConnManager::ConnManager(std::shared_ptr<ConnBuffer> buffer) : buffer(buffer) {}
+ConnManager::ConnManager(std::shared_ptr<ConnBuffer> buffer, size_t num_chs) : buffer(buffer), num_chs_(num_chs) {}
 
 status_t ConnManager::initiateServer(std::string ip, uint16_t port,
                                      ConnType serverType) {
   auto conn_manager_shared = shared_from_this();
 
   // 使用工厂方法创建 Server 实例
-  server = createServer(serverType, buffer, conn_manager_shared);
+  server = createServer(serverType, buffer, conn_manager_shared, num_chs_);
 
   // 启动一个新的线程运行服务器的监听循环
   server_thread = std::thread([this, ip = std::move(ip), port]() mutable {
@@ -67,7 +67,7 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
 
   switch (clientType) {
   case ConnType::RDMA: {
-    auto client = new RDMAClient(buffer);
+    auto client = new RDMAClient(buffer, num_chs_);
     endpoint = client->connect(targetIp, targetPort);
     break;
   }

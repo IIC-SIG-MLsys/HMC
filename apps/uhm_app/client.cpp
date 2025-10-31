@@ -242,8 +242,10 @@ int main(int argc, char *argv[]) {
   gpu_buffer =
       std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
-  gpu_comm = new Communicator(gpu_buffer);
-  cpu_comm = new Communicator(cpu_buffer);
+
+  int num_channels = 4;
+  gpu_comm = new Communicator(gpu_buffer, num_channels);
+  cpu_comm = new Communicator(cpu_buffer, num_channels);
 
   gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
   cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);

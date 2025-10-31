@@ -214,7 +214,7 @@ private:
   std::shared_ptr<ConnManager> conn_manager; ///< Underlying connection manager
 
 public:
-  explicit Communicator(std::shared_ptr<ConnBuffer> buffer);
+  explicit Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs = 1);
 
   // --- Core RDMA Operations ---
   status_t writeTo(std::string ip, size_t ptr_bias, size_t size,

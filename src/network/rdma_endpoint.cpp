@@ -1,19 +1,175 @@
 /**
- * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
+ * @copyright
+ * Copyright (c) 2025,
+ * SDU spgroup Holding Limited. All rights reserved.
  */
+
 #include "net_rdma.h"
 
 namespace hmc {
 
-RDMAEndpoint::RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer)
-    : buffer(buffer){};
+/* -------------------------------------------------------------------------- */
+/*                          RDMAEndpoint Lifecycle                            */
+/* -------------------------------------------------------------------------- */
+
+RDMAEndpoint::RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer, size_t num_qps)
+    : buffer(buffer), num_qps_(num_qps) {}
 
 RDMAEndpoint::~RDMAEndpoint() {
   if (role == EndpointType::Client && connStatus == status_t::SUCCESS) {
-    closeEndpoint(); // 目前只有在连接正常时，在client侧进行断开操作
+    closeEndpoint(); // only client actively closes
   }
   cleanRdmaResources();
-};
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              QP Management                                 */
+/* -------------------------------------------------------------------------- */
+
+status_t RDMAEndpoint::setupQPs() {
+  if (!pd || !cq || !cm_id) {
+    logError("RDMAEndpoint::setupQPs: invalid PD/CQ/cm_id");
+    return status_t::ERROR;
+  }
+
+  qps_.resize(num_qps_);
+
+  memset(&qp_init_attr, 0, sizeof(qp_init_attr));
+  qp_init_attr.qp_type = IBV_QPT_RC;
+  qp_init_attr.send_cq = cq;
+  qp_init_attr.recv_cq = cq;
+  qp_init_attr.cap.max_send_wr = max_wr;
+  qp_init_attr.cap.max_recv_wr = max_wr;
+  qp_init_attr.cap.max_send_sge = max_sge;
+  qp_init_attr.cap.max_recv_sge = max_sge;
+
+  // Primary QP attached to cm_id
+  if (rdma_create_qp(cm_id, pd, &qp_init_attr)) {
+    logError("Failed to create primary QP[0]");
+    return status_t::ERROR;
+  }
+  qps_[0] = cm_id->qp;
+
+  // Additional QPs created directly from verbs
+  for (size_t i = 1; i < num_qps_; ++i) {
+    qps_[i] = ibv_create_qp(pd, &qp_init_attr);
+    if (!qps_[i]) {
+      logError("Failed to create extra QP[%zu]", i);
+      return status_t::ERROR;
+    }
+  }
+
+  // Record QP numbers into metadata
+  local_metadata_attr.qp_nums = num_qps_;
+  for (size_t i = 0; i < num_qps_; ++i) {
+    local_metadata_attr.qp_num_list[i] = qps_[i]->qp_num;
+  }
+
+  return status_t::SUCCESS;
+}
+
+ibv_qp *RDMAEndpoint::getQP(size_t idx) {
+  if (num_qps_ == 0 || qps_.empty()) {
+    logError("getQP: QP not initialized");
+    return nullptr;
+  }
+  if (num_qps_ == 1) return qps_[0];
+  return qps_[idx % num_qps_];
+}
+
+status_t RDMAEndpoint::transitionExtraQPsToRTS() {
+  if (num_qps_ <= 1) return status_t::SUCCESS;
+
+  for (size_t i = 1; i < num_qps_; ++i) {
+    ibv_qp* qp = qps_[i];
+    if (!qp) continue;
+
+    // ---- INIT ----
+    {
+      ibv_qp_attr attr{};
+      attr.qp_state        = IBV_QPS_INIT;
+      attr.pkey_index      = 0;
+      attr.port_num        = port_num_;
+      attr.qp_access_flags = IBV_ACCESS_LOCAL_WRITE |
+                              IBV_ACCESS_REMOTE_READ |
+                              IBV_ACCESS_REMOTE_WRITE;
+
+      int flags = IBV_QP_STATE | IBV_QP_PKEY_INDEX |
+                  IBV_QP_PORT  | IBV_QP_ACCESS_FLAGS;
+      if (ibv_modify_qp(qp, &attr, flags)) {
+        logError("Failed to modify QP[%zu] to INIT: %s", i, strerror(errno));
+        return status_t::ERROR;
+      }
+    }
+
+    // ---- RTR (RoCEv2 / Global Route) ----
+    {
+      ibv_qp_attr attr{};
+      attr.qp_state           = IBV_QPS_RTR;
+      attr.path_mtu           = IBV_MTU_1024;   // 你也可做成配置
+      attr.dest_qp_num        = remote_metadata_attr.qp_num_list[i];
+      attr.rq_psn             = 0;              // 或按需随机
+      attr.max_dest_rd_atomic = 1;
+      attr.min_rnr_timer      = 12;
+
+      // RoCEv2: 使用全局 GRH
+      attr.ah_attr.is_global     = 1;
+      attr.ah_attr.port_num      = port_num_;
+      attr.ah_attr.sl            = 0;
+      attr.ah_attr.src_path_bits = 0;
+      attr.ah_attr.static_rate   = 0;
+      memset(&attr.ah_attr.grh,  0, sizeof(attr.ah_attr.grh));
+
+      // 关键：对端 GID -> dgid；本端 sgid index
+      memcpy(&attr.ah_attr.grh.dgid, remote_metadata_attr.gid, 16);
+      attr.ah_attr.grh.sgid_index = sgid_index_;     // 本端生效的 sgid 索引
+      attr.ah_attr.grh.hop_limit  = grh_hop_limit_;  // 常用 1
+
+      int rtr_flags = IBV_QP_STATE | IBV_QP_PATH_MTU | IBV_QP_AV |
+                      IBV_QP_DEST_QPN | IBV_QP_RQ_PSN |
+                      IBV_QP_MAX_DEST_RD_ATOMIC | IBV_QP_MIN_RNR_TIMER;
+
+      if (ibv_modify_qp(qp, &attr, rtr_flags)) {
+        logError("Failed to modify QP[%zu] to RTR (RoCEv2): %s",
+                 i, strerror(errno));
+        return status_t::ERROR;
+      }
+
+      logInfo("QP[%zu] RTR (RoCEv2): dgid[0..3]=%02x%02x%02x%02x, sgid_index=%u",
+              i,
+              attr.ah_attr.grh.dgid.raw[0], attr.ah_attr.grh.dgid.raw[1],
+              attr.ah_attr.grh.dgid.raw[2], attr.ah_attr.grh.dgid.raw[3],
+              attr.ah_attr.grh.sgid_index);
+    }
+
+    // ---- RTS ----
+    {
+      ibv_qp_attr attr{};
+      attr.qp_state      = IBV_QPS_RTS;
+      attr.timeout       = 14;
+      attr.retry_cnt     = 7;
+      attr.rnr_retry     = 7;
+      attr.sq_psn        = 0;   // 或者设置成本端的随机 psn
+      attr.max_rd_atomic = 1;
+
+      int rts_flags = IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
+                      IBV_QP_RNR_RETRY | IBV_QP_SQ_PSN | IBV_QP_MAX_QP_RD_ATOMIC;
+
+      if (ibv_modify_qp(qp, &attr, rts_flags)) {
+        logError("Failed to modify QP[%zu] to RTS: %s", i, strerror(errno));
+        return status_t::ERROR;
+      }
+
+      logInfo("QP[%zu] modified to RTS", i);
+    }
+  }
+
+  return status_t::SUCCESS;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                              Connection Ops                                */
+/* -------------------------------------------------------------------------- */
 
 status_t RDMAEndpoint::closeEndpoint() {
   struct rdma_cm_event *cm_event = nullptr;
@@ -31,13 +187,17 @@ status_t RDMAEndpoint::closeEndpoint() {
   return status_t::SUCCESS;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          RDMA Read/Write API                               */
+/* -------------------------------------------------------------------------- */
+
 status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
-  // 实现写入远端数据逻辑
   if (data_bias + size > buffer->buffer_size) {
     logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld",
              buffer->buffer_size, data_bias + size);
     return status_t::ERROR;
   }
+
   uint64_t wr_id;
   if (writeDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_write");
@@ -56,17 +216,18 @@ status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size,
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
   *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+  size_t qp_idx = *wr_id % num_qps_;
   return postWrite(localAddr, remoteAddr, size, buffer_mr,
-                   remote_metadata_attr.key, *wr_id, true);
+                   remote_metadata_attr.key, *wr_id, true, qp_idx);
 }
 
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
-  // 实现读取远端数据逻辑
   if (data_bias + size > buffer->buffer_size) {
     logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld",
              buffer->buffer_size, data_bias + size);
     return status_t::ERROR;
   }
+
   uint64_t wr_id;
   if (readDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_read");
@@ -85,37 +246,14 @@ status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size,
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
   *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+  size_t qp_idx = *wr_id % num_qps_;
   return postRead(localAddr, remoteAddr, size, buffer_mr,
-                  remote_metadata_attr.key, *wr_id, true);
+                  remote_metadata_attr.key, *wr_id, true, qp_idx);
 }
 
-status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
-                                      struct ibv_mr **mr) {
-  if (!addr || !mr) {
-    return status_t::ERROR;
-  }
-  *mr = ibv_reg_mr(pd, addr, length,
-                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
-                       IBV_ACCESS_REMOTE_WRITE);
-  if (!*mr) {
-    std::cout << pd << " " << addr << " " << length << std::endl;
-    logError("Failed to register memory region");
-    return status_t::ERROR;
-  }
-  return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::deRegisterMemory(struct ibv_mr *mr) {
-  if (!mr) {
-    return status_t::ERROR;
-  }
-
-  if (ibv_dereg_mr(mr)) {
-    logError("Failed to deregister memory region");
-    return status_t::ERROR;
-  }
-  return status_t::SUCCESS;
-}
+/* -------------------------------------------------------------------------- */
+/*                           UHM Send / Recv                                  */
+/* -------------------------------------------------------------------------- */
 
 status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags,
                                 MemoryType mem_type) {
@@ -128,53 +266,44 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags,
   size_t chunk_index = 0;
   size_t send_size = std::min(half_buffer_size, send_flags);
 
-  // 发送标志位，通知对面要发送多少数据
-
+  // set flags
   uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
   uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
-  // logDebug("send flags is %ld", send_flags); //
-  // 有概率触发读取不到最新值的情况，主动赋值或者打印会更新缓存
   uhm_buffer_state.length = send_flags;
 
+  // write buffer_state (use qp 0 for flag bootstrap)
   void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state);
   void *remoteAddr =
       reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address);
   uint64_t wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
   ret = postWrite(localAddr, remoteAddr, sizeof(uhm_buffer_state),
                   uhm_buffer_state_mr,
-                  remote_metadata_attr.uhm_buffer_state_key, wr_id, true);
+                  remote_metadata_attr.uhm_buffer_state_key, wr_id, true, 0);
   if (ret != status_t::SUCCESS) {
     logError("Client::Send: Failed to post write buffer state");
     return ret;
   }
-  // 首次缓冲区拷贝
+
+  // pre-fill first half buffer
   mem_type == MemoryType::CPU
       ? buffer->writeFromCpu(input_buffer, send_size, 0)
       : buffer->writeFromGpu(input_buffer, send_size, 0);
-  // 处理发送事件
+
   if (waitWrId(wr_id) != status_t::SUCCESS) {
-    logError("Client::Send: Failed to poll completion for chunk %zu",
-             current_chunk);
+    logError("Client::Send: Failed to poll completion for state write");
     return status_t::ERROR;
   }
 
   while (current_chunk < num_send_chunks) {
     chunk_index = current_chunk % 2;
     size_t next_chunk_index = (current_chunk + 1) % 2;
-    // logDebug(
-    //     "Client::Send: current_chunk %ld, chunk_index %ld, num_send_chunks
-    //     %ld", current_chunk, chunk_index, num_send_chunks);
 
-    // 远端会通过write改变本地uhm_buffer_state对应位置的状态
-    // 首先检查状态能不能写入远端
-    const int SPIN_COUNT =
-        100; // 3ghz的cpu，4000次大约相当于200us，100相当于5us
-
+    // spin until remote allows write on this half
+    const int SPIN_COUNT = 100;
     while (uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
       int spin = 0;
       while (spin++ < SPIN_COUNT &&
              uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
-// 使用 CPU pause 指令，减少功耗并优化自旋等待
 #if defined(__x86_64__) || defined(_M_X64)
         __builtin_ia32_pause();
 #elif defined(__aarch64__)
@@ -182,67 +311,66 @@ status_t RDMAEndpoint::uhm_send(void *input_buffer, const size_t send_flags,
 #endif
       }
       if (uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
-        // 超过自旋次数后短暂让出CPU
         std::this_thread::yield();
       }
     }
 
-    // 计算当前块的实际大小
+    // this chunk size
     size_t remaining = send_flags - current_chunk * half_buffer_size;
     send_size = std::min(half_buffer_size, remaining);
 
-    // 可写，写当前块到远端
-    ret = writeDataNB(chunk_index * half_buffer_size, send_size, &wr_id);
+    // choose qp for this chunk to keep ordering between data and flag
+    size_t qp_idx = current_chunk % num_qps_;
+
+    // post data write
+    void *data_local = static_cast<char *>(buffer->ptr) + chunk_index * half_buffer_size;
+    void *data_remote =
+        reinterpret_cast<char *>(remote_metadata_attr.address) + chunk_index * half_buffer_size;
+    wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+    ret = postWrite(data_local, data_remote, send_size, buffer_mr,
+                    remote_metadata_attr.key, wr_id, true, qp_idx);
     if (ret != status_t::SUCCESS) {
       logError("Client::Send: Failed to post write data for chunk %zu",
                current_chunk);
       return ret;
     }
-    // logDebug("Client::Send success");
 
-    // 发送标志位
+    // mark this half as readable on the same QP to preserve order
     uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_READ;
-    void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) +
-                      chunk_index * sizeof(UHM_STATE_TYPE);
-    void *remoteAddr = reinterpret_cast<char *>(
-                           remote_metadata_attr.uhm_buffer_state_address) +
+    void *flag_local = reinterpret_cast<char *>(&uhm_buffer_state) +
                        chunk_index * sizeof(UHM_STATE_TYPE);
-    ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE),
+    void *flag_remote =
+        reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) +
+        chunk_index * sizeof(UHM_STATE_TYPE);
+    ret = postWrite(flag_local, flag_remote, sizeof(UHM_STATE_TYPE),
                     uhm_buffer_state_mr,
-                    remote_metadata_attr.uhm_buffer_state_key, wr_id, true);
+                    remote_metadata_attr.uhm_buffer_state_key, wr_id, true, qp_idx);
     if (ret != status_t::SUCCESS) {
       logError("Client::Send: Failed to post write buffer state");
       return ret;
     }
 
-    // rdma对一个qp内的事件做保序
-    // 只有当还有下一块数据时才进行拷贝
+    // pre-fill next half if any
     if (current_chunk + 1 < num_send_chunks) {
       size_t next_remaining =
           send_flags - (current_chunk + 1) * half_buffer_size;
       size_t next_size = std::min(half_buffer_size, next_remaining);
-
       size_t bias = next_chunk_index * half_buffer_size;
-      // void* src = static_cast<char *>(input_buffer) + (current_chunk + 1) *
-      // half_buffer_size;
       mem_type == MemoryType::CPU
           ? buffer->writeFromCpu(input_buffer, next_size, bias)
           : buffer->writeFromGpu(input_buffer, next_size, bias);
     }
 
-    // 等待向远端写操作完成
+    // wait completion for data+flag
     if (waitWrId(wr_id) != status_t::SUCCESS) {
       logError("Client::Send: Failed to poll completion for chunk %zu",
                current_chunk);
       return status_t::ERROR;
     }
 
-    // logDebug("Client::Send: sent chunk %zu with size %zu", current_chunk,
-    // send_size);
     current_chunk++;
   }
 
-  // logDebug("Client::Send: sent finished");
   return status_t::SUCCESS;
 }
 
@@ -256,36 +384,30 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
   const size_t half_buffer_size = buffer->buffer_size / 2;
   size_t num_recv_chunks = 0;
 
-  // 初始化uhm_buffer_state，为了接受消息，先置可读
+  // init states so sender can see we're ready
   uhm_buffer_state.state[0] = UHM_BUFFER_CAN_READ;
   uhm_buffer_state.state[1] = UHM_BUFFER_CAN_READ;
   uhm_buffer_state.length = 0;
-  // logDebug("Server::Recv: uhm_buffer_state %d",
-  // this->uhm_buffer_state.state[0]);
 
-  // 接收要传入的块数量
-  const int SPIN_COUNT = 100; // 3ghz的cpu，4000次大约相当于200us，10:0.05us
+  // wait for length + initial states
+  const int SPIN_COUNT = 100;
   while (true) {
     auto tmp = uhm_buffer_state;
     if (tmp.state[chunk_index] == UHM_BUFFER_CAN_WRITE) {
-      // 检查接收大小的合法性
       *recv_flags = tmp.length;
       if (*recv_flags == 0) {
         logError("Server::Recv: Invalid receive size is 0");
         return status_t::ERROR;
       }
       num_recv_chunks = (*recv_flags + half_buffer_size - 1) / half_buffer_size;
-      this->uhm_buffer_state.state[0] =
-          UHM_BUFFER_CAN_WRITE; // 正确获取到flag，开始等对方写
+      this->uhm_buffer_state.state[0] = UHM_BUFFER_CAN_WRITE;
       this->uhm_buffer_state.state[1] = UHM_BUFFER_CAN_WRITE;
       break;
     }
 
-    // hygon cpu has bug，which need a small time block.
     int spin = 0;
     while (spin++ < SPIN_COUNT &&
            this->uhm_buffer_state.state[chunk_index] != UHM_BUFFER_CAN_WRITE) {
-// 使用 CPU pause 指令，减少功耗并优化自旋等待
 #if defined(__x86_64__) || defined(_M_X64)
       __builtin_ia32_pause();
 #elif defined(__aarch64__)
@@ -293,69 +415,62 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
 #endif
     }
   }
-  // logDebug("recv_flags %zu, current chunk %zu, num_recv_chunks %zu\n",
-  // *recv_flags, current_chunk, num_recv_chunks);
+
+  // receive chunks
   uint64_t wr_id;
   while (current_chunk < num_recv_chunks) {
     chunk_index = current_chunk % 2;
-    // logDebug("current_chunk %zu, chunk_index %zu,
-    // uhm_buffer_state.state[chunk_index] %u\n", current_chunk, chunk_index,
-    // uhm_buffer_state.state[chunk_index]);
-    // logDebug会触发缓存刷新，当前方案采用volite对state加缓存屏障解决此问题
+    // choose qp for this chunk (for ordering of flag write-back)
+    size_t qp_idx = current_chunk % num_qps_;
+
     if (this->uhm_buffer_state.state[chunk_index] == UHM_BUFFER_CAN_READ) {
-      // 直接同步通知对面可写
+      // immediately grant write permission back to sender (same QP)
       this->uhm_buffer_state.state[chunk_index] = UHM_BUFFER_CAN_WRITE;
-      void *localAddr = reinterpret_cast<char *>(&uhm_buffer_state) +
-                        chunk_index * sizeof(UHM_STATE_TYPE);
-      void *remoteAddr = reinterpret_cast<char *>(
-                             remote_metadata_attr.uhm_buffer_state_address) +
+      void *flag_local = reinterpret_cast<char *>(&uhm_buffer_state) +
                          chunk_index * sizeof(UHM_STATE_TYPE);
+      void *flag_remote =
+          reinterpret_cast<char *>(remote_metadata_attr.uhm_buffer_state_address) +
+          chunk_index * sizeof(UHM_STATE_TYPE);
       wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-      ret = postWrite(localAddr, remoteAddr, sizeof(UHM_STATE_TYPE),
+      ret = postWrite(flag_local, flag_remote, sizeof(UHM_STATE_TYPE),
                       uhm_buffer_state_mr,
-                      remote_metadata_attr.uhm_buffer_state_key, wr_id, true);
+                      remote_metadata_attr.uhm_buffer_state_key, wr_id, true, qp_idx);
       if (ret != status_t::SUCCESS) {
         logError("Server::Recv: Failed to post write buffer state");
         return ret;
       }
 
-      // 接收大小
-      if (current_chunk == num_recv_chunks - 1) { // 最后一次接收
+      // compute receive size
+      if (current_chunk == num_recv_chunks - 1) {
         recv_size = *recv_flags - accumulated_size;
-        logDebug("Server::Recv: Receive flag is %ld, accumulated size is %ld",
-                 *recv_flags, accumulated_size);
       } else {
         recv_size = half_buffer_size;
       }
-      // 检查接收大小的合法性
+      // boundary checks
       if (recv_size == 0) {
         logError("Server::Recv: Invalid receive size is 0");
         return status_t::ERROR;
       } else if (recv_size > buffer_size) {
-        logError("Server::Recv: Invalid receive size %zu is bigger than buffer "
-                 "size %zu",
+        logError("Server::Recv: Invalid receive size %zu > buffer_size %zu",
                  recv_size, buffer_size);
         return status_t::ERROR;
       } else if (accumulated_size + recv_size > buffer_size) {
-        logError(
-            "Server::Recv: Invalid accumulated_size + recv_size > buffer_size");
+        logError("Server::Recv: accumulated_size + recv_size > buffer_size");
         return status_t::ERROR;
       }
 
-      // 拷贝到输出缓冲区
+      // copy to output
       size_t bias = chunk_index * half_buffer_size;
       void *dest = static_cast<char *>(output_buffer) + accumulated_size;
       mem_type == MemoryType::CPU ? buffer->readToCpu(dest, recv_size, bias)
                                   : buffer->readToGpu(dest, recv_size, bias);
 
-      // 处理通知完成消息，防止漏掉结束消息
+      // ensure flag write completion processed
       if (waitWrId(wr_id) != status_t::SUCCESS) {
         logError("Failed to poll completion queue");
         return status_t::ERROR;
       }
 
-      // logDebug("current chunk %zu, total chunk %zu\n", current_chunk,
-      // num_recv_chunks);
       accumulated_size += recv_size;
       current_chunk++;
     }
@@ -364,53 +479,101 @@ status_t RDMAEndpoint::uhm_recv(void *output_buffer, const size_t buffer_size,
   return status_t::SUCCESS;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Memory Registration                              */
+/* -------------------------------------------------------------------------- */
+
+status_t RDMAEndpoint::registerMemory(void *addr, size_t length,
+                                      struct ibv_mr **mr) {
+  if (!addr || !mr) {
+    return status_t::ERROR;
+  }
+  *mr = ibv_reg_mr(pd, addr, length,
+                   IBV_ACCESS_LOCAL_WRITE | IBV_ACCESS_REMOTE_READ |
+                       IBV_ACCESS_REMOTE_WRITE);
+  if (!*mr) {
+    logError("Failed to register memory region");
+    return status_t::ERROR;
+  }
+  return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::deRegisterMemory(struct ibv_mr *mr) {
+  if (!mr) return status_t::ERROR;
+  if (ibv_dereg_mr(mr)) {
+    logError("Failed to deregister memory region");
+    return status_t::ERROR;
+  }
+  return status_t::SUCCESS;
+}
+
+/* -------------------------------------------------------------------------- */
+/*                           Buffer Initialization                            */
+/* -------------------------------------------------------------------------- */
+
 status_t RDMAEndpoint::setupBuffers() {
-  /** buffer 的相关数据准备 **/
-  // 注册本地元数据缓冲区
   status_t ret = registerMemory(
       &local_metadata_attr, sizeof(local_metadata_attr), &local_metadata_mr);
-  if (ret != status_t::SUCCESS) {
-    logError("Error while register local_metadata_attr");
-    return ret;
-  }
-  // 注册远程元数据缓冲区
+  if (ret != status_t::SUCCESS) return ret;
+
   ret = registerMemory(&remote_metadata_attr, sizeof(remote_metadata_attr),
                        &remote_metadata_mr);
-  if (ret != status_t::SUCCESS) {
-    logError("Error while register remote_metadata_attr");
-    return ret;
-  }
-  if (buffer == NULL) {
+  if (ret != status_t::SUCCESS) return ret;
+
+  if (!buffer) {
     logError("Error while register buffer, buffer is NULL");
-    return ret;
+    return status_t::ERROR;
   }
-  // 注册缓冲区
+
   ret = registerMemory(buffer->ptr, buffer->buffer_size, &buffer_mr);
   if (ret != status_t::SUCCESS) {
     logError("Error while register buffer %p", buffer.get());
     return ret;
   }
-  // 设置本地元数据属性
+
   local_metadata_attr.address = (uint64_t)buffer->ptr;
   local_metadata_attr.length = buffer->buffer_size;
   local_metadata_attr.key = buffer_mr->lkey;
 
-  /** TODO：在这里增加，支持更多的数据buffer; 在metadata里面存好相关地址和key
-   * **/
   ret = registerMemory(&uhm_buffer_state, sizeof(uhm_buffer_state),
                        &uhm_buffer_state_mr);
   if (ret != status_t::SUCCESS) {
     logError("Error while register uhm_buffer_state");
     return ret;
   }
+
   local_metadata_attr.uhm_buffer_state_address = (uint64_t)&uhm_buffer_state;
   local_metadata_attr.uhm_buffer_state_key = uhm_buffer_state_mr->lkey;
+
+  // RoCEv2: query GID 并写入 metadata
+  {
+    ibv_gid gid{};
+    int rc = ibv_query_gid(pd->context, port_num_, sgid_index_, &gid);
+    if (rc == 0) {
+      memcpy(local_metadata_attr.gid, &gid, 16);
+      local_metadata_attr.sgid_index = sgid_index_;
+    } else {
+      memset(local_metadata_attr.gid, 0, 16);
+      local_metadata_attr.sgid_index = sgid_index_;
+      logError("ibv_query_gid failed on port=%u index=%u (rc=%d)",
+               port_num_, sgid_index_, rc);
+    }
+  }
+
+  // Fill QP info after QP setup
+  local_metadata_attr.qp_nums = num_qps_;
+  for (size_t i = 0; i < num_qps_; ++i)
+    local_metadata_attr.qp_num_list[i] = qps_[i]->qp_num;
 
   return status_t::SUCCESS;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                          RDMA Post Operations                              */
+/* -------------------------------------------------------------------------- */
+
 status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
-                                uint64_t wr_id, bool signaled) {
+                                uint64_t wr_id, bool signaled, size_t qp_idx) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -427,7 +590,8 @@ status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
   wr.opcode = IBV_WR_SEND;
   wr.send_flags = signaled ? IBV_SEND_SIGNALED : 0;
 
-  if (ibv_post_send(qp, &wr, &bad_wr)) {
+  ibv_qp *target_qp = getQP(qp_idx);
+  if (ibv_post_send(target_qp, &wr, &bad_wr)) {
     logError("Failed to post RDMA send");
     return status_t::ERROR;
   }
@@ -435,7 +599,7 @@ status_t RDMAEndpoint::postSend(void *addr, size_t length, struct ibv_mr *mr,
 }
 
 status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr,
-                                uint64_t wr_id) {
+                                uint64_t wr_id, size_t qp_idx) {
   struct ibv_recv_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -450,7 +614,8 @@ status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr,
   wr.sg_list = &sge;
   wr.num_sge = 1;
 
-  if (ibv_post_recv(qp, &wr, &bad_wr)) {
+  ibv_qp *target_qp = getQP(qp_idx);
+  if (ibv_post_recv(target_qp, &wr, &bad_wr)) {
     logError("Failed to post RDMA recv");
     return status_t::ERROR;
   }
@@ -460,7 +625,7 @@ status_t RDMAEndpoint::postRecv(void *addr, size_t length, struct ibv_mr *mr,
 status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
                                  size_t length, struct ibv_mr *local_mr,
                                  uint32_t remote_key, uint64_t wr_id,
-                                 bool signaled) {
+                                 bool signaled, size_t qp_idx) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -475,20 +640,21 @@ status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
   wr.sg_list = &sge;
   wr.num_sge = 1;
   wr.opcode = IBV_WR_RDMA_WRITE;
-  wr.send_flags = signaled ? IBV_SEND_SIGNALED : 0; // 带信号，则后续处理cq即可
+  wr.send_flags = signaled ? IBV_SEND_SIGNALED : 0;
   wr.wr.rdma.remote_addr = (uint64_t)remote_addr;
   wr.wr.rdma.rkey = remote_key;
 
-  if (ibv_post_send(qp, &wr, &bad_wr)) {
+  ibv_qp *target_qp = getQP(qp_idx);
+  if (ibv_post_send(target_qp, &wr, &bad_wr)) {
     int e = errno;
-    logError("ibv_post_send failed: errno=%d (%s)", e, strerror(e));
+    logError("ibv_post_send failed on QP[%zu]: errno=%d (%s)", qp_idx, e, strerror(e));
     if (bad_wr)
       fprintf(stderr, "Failed wr_id: %lu\n", bad_wr->wr_id);
 
     ibv_qp_attr attr;
     ibv_qp_init_attr init_attr;
-    if (ibv_query_qp(qp, &attr, IBV_QP_STATE, &init_attr) == 0) {
-      logError("QP state after failure: %d", attr.qp_state);
+    if (ibv_query_qp(target_qp, &attr, IBV_QP_STATE, &init_attr) == 0) {
+      logError("QP[%zu] state after failure: %d", qp_idx, attr.qp_state);
     }
     return status_t::ERROR;
   }
@@ -498,7 +664,7 @@ status_t RDMAEndpoint::postWrite(void *local_addr, void *remote_addr,
 status_t RDMAEndpoint::postRead(void *local_addr, void *remote_addr,
                                 size_t length, struct ibv_mr *local_mr,
                                 uint32_t remote_key, uint64_t wr_id,
-                                bool signaled) {
+                                bool signaled, size_t qp_idx) {
   struct ibv_send_wr wr, *bad_wr = nullptr;
   struct ibv_sge sge;
 
@@ -517,27 +683,44 @@ status_t RDMAEndpoint::postRead(void *local_addr, void *remote_addr,
   wr.wr.rdma.remote_addr = (uint64_t)remote_addr;
   wr.wr.rdma.rkey = remote_key;
 
-  if (ibv_post_send(qp, &wr, &bad_wr)) {
-    logError("Failed to post RDMA read");
+  ibv_qp *target_qp = getQP(qp_idx);
+  if (ibv_post_send(target_qp, &wr, &bad_wr)) {
+    logError("Failed to post RDMA read on QP[%zu]", qp_idx);
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
 }
 
+/* -------------------------------------------------------------------------- */
+/*                           Debug helper                                     */
+/* -------------------------------------------------------------------------- */
+
 void RDMAEndpoint::showRdmaBufferAttr(const struct rdma_buffer_attr *attr) {
   logInfo("Buffer Attr:");
-  logInfo("  address: 0x%lx\n", attr->address);
-  logInfo("  length: %u\n", attr->length);
-  logInfo("  key: 0x%x\n", attr->key);
-  logInfo("  uhm_buffer_state address: 0x%lx\n",
-          attr->uhm_buffer_state_address);
+  logInfo("  address: 0x%lx", attr->address);
+  logInfo("  length: %u", attr->length);
+  logInfo("  key: 0x%x", attr->key);
+  logInfo("  uhm_buffer_state address: 0x%lx", attr->uhm_buffer_state_address);
+  logInfo("  uhm_buffer_state key: 0x%x", attr->uhm_buffer_state_key);
+  logInfo("  QPs: %u", attr->qp_nums);
+  for (uint32_t i = 0; i < attr->qp_nums; ++i) {
+    logInfo("    qp_num_list[%u] = %u", i, attr->qp_num_list[i]);
+  }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                            Resource Cleanup                                */
+/* -------------------------------------------------------------------------- */
+
 void RDMAEndpoint::cleanRdmaResources() {
-  if (qp) {
-    ibv_destroy_qp(qp);
-    qp = nullptr;
+  for (auto &qp_ptr : qps_) {
+    if (qp_ptr) {
+      ibv_destroy_qp(qp_ptr);
+      qp_ptr = nullptr;
+    }
   }
+  qps_.clear();
+
   if (cq) {
     ibv_destroy_cq(cq);
     cq = nullptr;
@@ -566,15 +749,15 @@ void RDMAEndpoint::cleanRdmaResources() {
     rdma_destroy_event_channel(cm_event_channel);
     cm_event_channel = nullptr;
   }
-  if (cm_id &&
-      cm_id
-          ->context) { // 清理到这里，context失效了，没走rdma_destroy_id,可能有泄漏风险
+  if (cm_id) {
     rdma_destroy_id(cm_id);
     cm_id = nullptr;
   }
-
-  // 注意 buffer 的清理工作由外部的ConnMemory维护，Endpoint不对buffer进行处理
 }
+
+/* -------------------------------------------------------------------------- */
+/*                          Completion Queue Polling                          */
+/* -------------------------------------------------------------------------- */
 
 status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
   if (!cq) {
@@ -591,8 +774,7 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
       logError("waitWrId: poll CQ failed");
       return status_t::ERROR;
     }
-    if (n == 0)
-      continue;
+    if (n == 0) continue;
 
     for (int i = 0; i < n; ++i) {
       if (wcs[i].status != IBV_WC_SUCCESS) {

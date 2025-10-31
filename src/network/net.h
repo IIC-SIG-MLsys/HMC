@@ -86,7 +86,7 @@ public:
     std::mutex mutex; // 排他性使用, ep一次只可以被一个调用使用
   };
 
-  ConnManager(std::shared_ptr<ConnBuffer> buffer);
+  ConnManager(std::shared_ptr<ConnBuffer> buffer, size_t num_chs);
   // shared ptr 不能在构造函数里面shared from this,需要构造完成后，单独初始化
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
   status_t stopServer();
@@ -141,6 +141,7 @@ public:
   ~ConnManager();
 
 private:
+  size_t num_chs_ = 1;
   std::unordered_map<std::string, EndpointEntry> endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex endpoint_map_mutex; // 用于保护对 endpoint_map 的访问

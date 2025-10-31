@@ -22,9 +22,6 @@ std::unique_ptr<MemoryBase> Memory::createMemoryClass(MemoryType mem_type) {
   case MemoryType::CAMBRICON_MLU:
     return std::make_unique<NeuwareMemory>(this->hmcDeviceId,
                                            this->hmcMemoryType);
-  case MemoryType::HUAWEI_ASCEND_NPU:
-    return std::make_unique<HuaweiMemory>(this->hmcDeviceId,
-                                          this->hmcMemoryType);
   case MemoryType::MOORE_GPU:
     return std::make_unique<MusaMemory>(this->hmcDeviceId, this->hmcMemoryType);
   default:
@@ -85,10 +82,6 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
     this->hmcMemoryType = MemoryType::CAMBRICON_MLU;
 #endif
 
-#ifdef ENABLE_HUAWEI
-    this->hmcMemoryType = MemoryType::HUAWEI_ASCEND_NPU;
-#endif
-
 #ifdef ENABLE_MUSA
     this->hmcMemoryType = MemoryType::MOORE_GPU;
 #endif
@@ -111,11 +104,7 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
       throw std::runtime_error("Cambricon MLU is not supported");
       this->initStatus = status_t::UNSUPPORT;
 #endif
-    } else if (mem_type == MemoryType::HUAWEI_ASCEND_NPU) {
-#ifndef ENABLE_HUAWEI
-      throw std::runtime_error("Huawei GPU is not supported");
-      this->initStatus = status_t::UNSUPPORT;
-#endif
+    } else if (mem_type == MemoryType::MOORE_GPU) {
 #ifdef ENABLE_MUSA
       throw std::runtime_error("Moore GPU is not supported");
       this->initStatus = status_t::UNSUPPORT;

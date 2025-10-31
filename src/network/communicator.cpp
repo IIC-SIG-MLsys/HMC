@@ -6,9 +6,9 @@
 
 namespace hmc {
 
-Communicator::Communicator(std::shared_ptr<ConnBuffer> buffer)
+Communicator::Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs)
     : buffer(buffer) {
-  conn_manager = std::make_shared<ConnManager>(buffer);
+  conn_manager = std::make_shared<ConnManager>(buffer, num_chs);
 };
 
 Communicator::~Communicator() {
