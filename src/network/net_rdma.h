@@ -100,8 +100,15 @@ public:
   status_t readData(size_t data_bias, size_t size) override;
 
   status_t writeDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
+  status_t writeDataNB_2(size_t data_bias, size_t size, uint64_t *wr_id);
+  status_t writeDataNBMulti(size_t data_bias, size_t size,
+                                   std::vector<uint64_t> *wr_ids);
   status_t readDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
+  status_t readDataNBMulti(size_t data_bias, size_t size,
+                                  std::vector<uint64_t> *wr_ids);
   status_t waitWrId(uint64_t wr_id) override;
+  status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
+                                     std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
   /* User-hosted memory (UHM) send/receive */
   status_t uhm_send(void *input_buffer, const size_t send_flags,
@@ -160,6 +167,9 @@ public:
   uint16_t cq_capacity = 16;
   uint16_t max_sge = 2;
   uint16_t max_wr = 8;
+  // ConnectX-5
+  // max_qp_wr  = 32768
+  // max_cqe    = 4194303
 
   uint8_t port_num_      = 1;  // HCA 端口
   uint8_t sgid_index_    = 1;

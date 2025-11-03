@@ -5,6 +5,7 @@
  */
 
 #include "net_rdma.h"
+#include <unordered_set>
 
 namespace hmc {
 
@@ -106,9 +107,9 @@ status_t RDMAEndpoint::transitionExtraQPsToRTS() {
     {
       ibv_qp_attr attr{};
       attr.qp_state           = IBV_QPS_RTR;
-      attr.path_mtu           = IBV_MTU_1024;   // 你也可做成配置
+      attr.path_mtu           = IBV_MTU_1024;
       attr.dest_qp_num        = remote_metadata_attr.qp_num_list[i];
-      attr.rq_psn             = 0;              // 或按需随机
+      attr.rq_psn             = 0;
       attr.max_dest_rd_atomic = 1;
       attr.min_rnr_timer      = 12;
 
@@ -149,7 +150,7 @@ status_t RDMAEndpoint::transitionExtraQPsToRTS() {
       attr.timeout       = 14;
       attr.retry_cnt     = 7;
       attr.rnr_retry     = 7;
-      attr.sq_psn        = 0;   // 或者设置成本端的随机 psn
+      attr.sq_psn        = 0;
       attr.max_rd_atomic = 1;
 
       int rts_flags = IBV_QP_STATE | IBV_QP_TIMEOUT | IBV_QP_RETRY_CNT |
@@ -198,6 +199,7 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
     return status_t::ERROR;
   }
 
+  /* single qp version */
   uint64_t wr_id;
   if (writeDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_write");
@@ -207,6 +209,31 @@ status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
+
+  /* single qp multi wrs version */
+  // uint64_t wr_id;
+  // if (writeDataNB_2(data_bias, size, &wr_id) != status_t::SUCCESS) {
+  //   logError("Error for post_write");
+  //   return status_t::ERROR;
+  // }
+  // if (waitWrId(wr_id) != status_t::SUCCESS) {
+  //   logError("Error for waiting writeData finished");
+  //   return status_t::ERROR;
+  // }
+
+  /* multi qp version */
+  // std::vector<uint64_t> wr_ids;
+  // status_t ret = writeDataNBMulti(data_bias, size, &wr_ids);
+  // if (ret != status_t::SUCCESS) {
+  //   logError("writeDataNB failed");
+  //   return ret;
+  // }
+  // for (auto wr : wr_ids) {
+  //   if (waitWrId(wr) != status_t::SUCCESS) {
+  //     logError("Error waiting for writeData WR %lu finished", wr);
+  //     return status_t::ERROR;
+  //   }
+  // }
   return status_t::SUCCESS;
 }
 
@@ -221,6 +248,87 @@ status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size,
                    remote_metadata_attr.key, *wr_id, true, qp_idx);
 }
 
+status_t RDMAEndpoint::writeDataNB_2(size_t data_bias, size_t size,
+                                     uint64_t *wr_id) {
+  const size_t chunk_size = 128 * 1024;  // 64KB
+
+  if (data_bias + size > buffer->buffer_size) {
+    logError("writeDataNB_2: invalid range, buffer_size=%zu, request_end=%zu",
+             buffer->buffer_size, data_bias + size);
+    return status_t::ERROR;
+  }
+
+  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+  size_t qp_idx = *wr_id % num_qps_;
+
+  size_t remaining = size;
+  size_t offset = 0;
+  uint64_t cur_wr_id = *wr_id;
+
+  while (remaining > 0) {
+    size_t this_size = std::min(chunk_size, remaining);
+    void *localAddr =
+        static_cast<char *>(buffer->ptr) + data_bias + offset;
+    void *remoteAddr =
+        reinterpret_cast<char *>(remote_metadata_attr.address) +
+        data_bias + offset;
+
+    bool signaled = (remaining <= chunk_size);  // only the last WR signaled
+
+    status_t ret = postWrite(localAddr, remoteAddr, this_size, buffer_mr,
+                             remote_metadata_attr.key, cur_wr_id, signaled,
+                             qp_idx);
+    if (ret != status_t::SUCCESS) {
+      logError("writeDataNB_2: postWrite failed at offset %zu (size=%zu)", offset, this_size);
+      return ret;
+    }
+
+    offset += this_size;
+    remaining -= this_size;
+  }
+
+  return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::writeDataNBMulti(size_t data_bias, size_t size,
+                                   std::vector<uint64_t> *wr_ids) {
+  if (num_qps_ == 0 || qps_.empty()) {
+    logError("writeDataNB: No QPs available");
+    return status_t::ERROR;
+  }
+  if (!wr_ids) {
+    logError("writeDataNB: wr_ids pointer is null");
+    return status_t::ERROR;
+  }
+
+  wr_ids->clear();
+
+  const size_t chunk_size = (size + num_qps_ - 1) / num_qps_;
+  const size_t actual_qps = std::min(num_qps_, (size + chunk_size - 1) / chunk_size);
+
+  for (size_t i = 0; i < actual_qps; ++i) {
+    size_t offset = data_bias + i * chunk_size;
+    size_t write_size = std::min(chunk_size, size - i * chunk_size);
+    if (write_size == 0) break;
+
+    void *localAddr = static_cast<char *>(buffer->ptr) + offset;
+    void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + offset;
+
+    uint64_t local_wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+    wr_ids->push_back(local_wr_id);
+
+    status_t ret = postWrite(localAddr, remoteAddr, write_size,
+                             buffer_mr, remote_metadata_attr.key,
+                             local_wr_id, true, i % num_qps_);
+    if (ret != status_t::SUCCESS) {
+      logError("writeDataNB: postWrite failed on QP[%zu]", i);
+      return ret;
+    }
+  }
+
+  return status_t::SUCCESS;
+}
+
 status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
   if (data_bias + size > buffer->buffer_size) {
     logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld",
@@ -228,6 +336,7 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
     return status_t::ERROR;
   }
 
+  /* single qp version */
   uint64_t wr_id;
   if (readDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
     logError("Error for post_read");
@@ -237,6 +346,20 @@ status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
     logError("Error for waiting writeData finished");
     return status_t::ERROR;
   }
+
+  /* multi qp version */
+  // std::vector<uint64_t> wr_ids;
+  // status_t ret = readDataNBMulti(data_bias, size, &wr_ids);
+  // if (ret != status_t::SUCCESS) {
+  //   logError("readDataNB failed");
+  //   return ret;
+  // }
+  // for (auto wr : wr_ids) {
+  //   if (waitWrId(wr) != status_t::SUCCESS) {
+  //     logError("Error waiting for readData WR %lu finished", wr);
+  //     return status_t::ERROR;
+  //   }
+  // }
   return status_t::SUCCESS;
 }
 
@@ -249,6 +372,45 @@ status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size,
   size_t qp_idx = *wr_id % num_qps_;
   return postRead(localAddr, remoteAddr, size, buffer_mr,
                   remote_metadata_attr.key, *wr_id, true, qp_idx);
+}
+
+status_t RDMAEndpoint::readDataNBMulti(size_t data_bias, size_t size,
+                                  std::vector<uint64_t> *wr_ids) {
+  if (num_qps_ == 0 || qps_.empty()) {
+    logError("readDataNB: No QPs available");
+    return status_t::ERROR;
+  }
+  if (!wr_ids) {
+    logError("readDataNB: wr_ids pointer is null");
+    return status_t::ERROR;
+  }
+
+  wr_ids->clear();
+
+  const size_t chunk_size = (size + num_qps_ - 1) / num_qps_;
+  const size_t actual_qps = std::min(num_qps_, (size + chunk_size - 1) / chunk_size);
+
+  for (size_t i = 0; i < actual_qps; ++i) {
+    size_t offset = data_bias + i * chunk_size;
+    size_t read_size = std::min(chunk_size, size - i * chunk_size);
+    if (read_size == 0) break;
+
+    void *localAddr = static_cast<char *>(buffer->ptr) + offset;
+    void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + offset;
+
+    uint64_t local_wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+    wr_ids->push_back(local_wr_id);
+
+    status_t ret = postRead(localAddr, remoteAddr, read_size,
+                            buffer_mr, remote_metadata_attr.key,
+                            local_wr_id, true, i % num_qps_);
+    if (ret != status_t::SUCCESS) {
+      logError("readDataNB: postRead failed on QP[%zu]", i);
+      return ret;
+    }
+  }
+
+  return status_t::SUCCESS;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -786,6 +948,97 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
       }
     }
   }
+}
+
+status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
+                                     std::chrono::milliseconds timeout /* = std::chrono::seconds(5) */) {
+  if (!cq) {
+    logError("waitWrIdMulti: CQ is null");
+    return status_t::ERROR;
+  }
+  if (target_wr_ids.empty()) {
+    logDebug("waitWrIdMulti: empty wr_id list");
+    return status_t::SUCCESS;
+  }
+
+  const int max_wcs = cq_capacity;
+  std::vector<ibv_wc> wcs(max_wcs);
+
+  std::unordered_set<uint64_t> pending(target_wr_ids.begin(), target_wr_ids.end());
+  auto start_ts   = std::chrono::steady_clock::now();
+  auto last_prog  = start_ts;
+  size_t last_left = pending.size();
+
+  while (!pending.empty()) {
+    int n = ibv_poll_cq(cq, max_wcs, wcs.data());
+    if (n < 0) {
+      logError("waitWrIdMulti: poll CQ failed (n=%d, errno=%d %s)", n, errno, strerror(errno));
+      return status_t::ERROR;
+    }
+
+    bool made_progress = false;
+
+    if (n > 0) {
+      for (int i = 0; i < n; ++i) {
+        const auto &cqe = wcs[i];
+
+        if (cqe.status != IBV_WC_SUCCESS) {
+          logError("waitWrIdMulti: CQE error: wr_id=%lu status=%d vendor_err=0x%x",
+                   cqe.wr_id, cqe.status, cqe.vendor_err);
+          return status_t::ERROR;
+        }
+
+        auto it = pending.find(cqe.wr_id);
+        if (it != pending.end()) {
+          pending.erase(it);
+          made_progress = true;
+
+          if (pending.size() != last_left) {
+            logDebug("waitWrIdMulti: WR %lu done, remaining=%zu", cqe.wr_id, pending.size());
+            last_left = pending.size();
+          }
+        }
+      }
+    }
+
+    if (made_progress) {
+      last_prog = std::chrono::steady_clock::now();
+      continue;
+    }
+
+#if defined(__x86_64__) || defined(_M_X64)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
+#endif
+    std::this_thread::sleep_for(std::chrono::microseconds(50));
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - start_ts > timeout) {
+      logError("waitWrIdMulti: timeout after %lld ms, still pending=%zu",
+               (long long)std::chrono::duration_cast<std::chrono::milliseconds>(now - start_ts).count(),
+               pending.size());
+
+      for (size_t i = 0; i < qps_.size(); ++i) {
+        if (!qps_[i]) continue;
+        ibv_qp_attr attr;
+        ibv_qp_init_attr init_attr;
+        if (ibv_query_qp(qps_[i], &attr, IBV_QP_STATE, &init_attr) == 0) {
+          logError("QP[%zu] state=%d (INIT=0, RTR=3, RTS=4, SQD=5, SQE=6, ERR=7)",
+                   i, attr.qp_state);
+        } else {
+          logError("QP[%zu] ibv_query_qp failed errno=%d %s", i, errno, strerror(errno));
+        }
+      }
+
+      for (auto wr : pending) {
+        logError("Pending WR still not completed: %lu", wr);
+      }
+      return status_t::TIMEOUT;
+    }
+  }
+
+  return status_t::SUCCESS;
 }
 
 } // namespace hmc
