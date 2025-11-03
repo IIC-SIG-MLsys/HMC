@@ -5,16 +5,26 @@
 
 ---
 
-## 🧩 Overview
+## Overview
 
-**HMC (Heterogeneous Memories Communication)** is a unified communication and memory management framework designed for heterogeneous computing environments — including **CPU, GPU, MLU, NPU**, and other accelerators.
+**HMC** is a **high-performance GPU communication framework** for heterogeneous computing.
+It performs **GPU-direct data transfer** with **low QP and pinned memory usage**, sustaining **high throughput under limited RDMA resources**.
 
-It provides:
+---
 
-* Unified **memory abstraction** for multiple device types
-* High-performance **RDMA/UCX communication layer**
-* Built-in **control channel (TCP-based)** for synchronization
-* Seamless data transfer between heterogeneous devices
+At a **4 MB buffer size**, HMC achieves **significantly higher bandwidth** than CPU-mediated transfers, demonstrating its efficiency in GPU-direct data paths.
+
+![](./docs/logs/4MB_AMD.png)
+
+---
+
+### Features
+
+* Unified memory abstraction for CPU and GPU
+* Support for heterogeneous GPUs, including NVIDIA, AMD, Hygon, Cambricon, and Moore Threads
+* GPU-direct RDMA communication without host staging
+* Efficient copy–transfer overlap for improved pipeline utilization
+* Superior bandwidth scalability with large transfer sizes
 
 ---
 
@@ -50,8 +60,8 @@ It provides:
 
 ```bash
 # Clone and enter the repository
-git clone https://github.com/yourorg/hmc.git
-cd hmc
+git clone https://github.com/IIC-SIG-MLsys/HMC.git
+cd HMC
 
 # Create build directory
 mkdir build && cd build

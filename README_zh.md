@@ -56,8 +56,8 @@
 
 ```bash
 # 克隆项目
-git clone https://github.com/yourorg/hmc.git
-cd hmc
+git clone https://github.com/IIC-SIG-MLsys/HMC.git
+cd HMC
 
 # 创建构建目录
 mkdir build && cd build
