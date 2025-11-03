@@ -42,12 +42,11 @@
 
 根据不同设备安装对应驱动和 SDK：
 
-| 平台                | 依赖库           |
+| 平台               | 依赖库         |
 | ----------------- | ------------- |
 | NVIDIA GPU        | CUDA Toolkit  |
-| AMD GPU           | ROCm          |
+| AMD/Hygon GPU     | ROCm          |
 | Cambricon MLU     | CNRT / MLU-OP |
-| Huawei Ascend NPU | CANN          |
 | Moore GPU         | MUSA Runtime  |
 
 ---
@@ -200,7 +199,6 @@ enum class MemoryType {
   NVIDIA_GPU,
   AMD_GPU,
   CAMBRICON_MLU,
-  HUAWEI_ASCEND_NPU,
   MOORE_GPU
 };
 ```

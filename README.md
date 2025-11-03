@@ -49,9 +49,8 @@ At a **4 MB buffer size**, HMC achieves **significantly higher bandwidth** than 
 * Device-specific drivers and SDKs:
 
   * **CUDA** (for NVIDIA GPU)
-  * **ROCm** (for AMD GPU)
+  * **ROCm** (for AMD/Hygon GPU)
   * **CNRT / MLU-OP** (for Cambricon MLU)
-  * **Ascend CANN** (for Huawei Ascend NPU)
   * **MUSA Runtime** (for Moore Threads GPU)
 
 ---
@@ -200,7 +199,6 @@ enum class MemoryType {
   NVIDIA_GPU,
   AMD_GPU,
   CAMBRICON_MLU,
-  HUAWEI_ASCEND_NPU,
   MOORE_GPU
 };
 ```
