@@ -1,0 +1,86 @@
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I1103 05:23:30.709925 2652277 client.cpp:236] Running in mode: g2h2g
+I1103 05:23:30.710026 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:30.710093 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:30.746687 2652277 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2025 (QPs: 1)
+I1103 05:23:30.747000 2652277 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:23:30.748360 2652277 rdma_client.cpp:219]   local QP[0] num = 121617
+[m[0;33mW1103 05:23:30.748376 2652277 rdma_client.cpp:222]   remote QP[0] num = 13209
+[mI1103 05:23:30.748390 2652277 rdma_client.cpp:165] Client:: Connection established successfully
+I1103 05:23:30.754427 2652277 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2026 (QPs: 1)
+I1103 05:23:30.842700 2652277 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:23:30.842765 2652277 rdma_client.cpp:219]   local QP[0] num = 121618
+[m[0;33mW1103 05:23:30.842778 2652277 rdma_client.cpp:222]   remote QP[0] num = 13210
+[mI1103 05:23:30.842792 2652277 rdma_client.cpp:165] Client:: Connection established successfully
+Connected to control server.
+I1103 05:23:34.844342 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:35.052246 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:35.052389 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 1024 B, Time: 52 us, 18.78 MiB/s, 0.157538 Gbps
+I1103 05:23:37.057439 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:37.057577 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:37.057679 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 2048 B, Time: 44 us, 44.3892 MiB/s, 0.372364 Gbps
+I1103 05:23:39.062844 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:39.062986 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:39.063097 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 4096 B, Time: 54 us, 72.338 MiB/s, 0.606815 Gbps
+I1103 05:23:41.067854 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:41.067976 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:41.068051 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 8192 B, Time: 46 us, 169.837 MiB/s, 1.4247 Gbps
+I1103 05:23:43.072999 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:43.073151 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:43.073259 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 16384 B, Time: 51 us, 306.373 MiB/s, 2.57004 Gbps
+I1103 05:23:45.077405 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:45.090570 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:45.090708 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 32768 B, Time: 68 us, 459.559 MiB/s, 3.85506 Gbps
+I1103 05:23:47.094858 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:47.094997 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:47.095162 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 65536 B, Time: 111 us, 563.063 MiB/s, 4.72332 Gbps
+I1103 05:23:49.101467 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:49.101624 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:49.101919 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 131072 B, Time: 224 us, 558.036 MiB/s, 4.68114 Gbps
+I1103 05:23:51.106943 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:51.107100 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:51.107787 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 262144 B, Time: 632 us, 395.57 MiB/s, 3.31828 Gbps
+I1103 05:23:53.111126 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:53.111299 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:53.114586 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 524288 B, Time: 1445 us, 346.021 MiB/s, 2.90263 Gbps
+I1103 05:23:55.117411 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:55.117677 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:55.122074 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 1048576 B, Time: 3033 us, 329.707 MiB/s, 2.76578 Gbps
+I1103 05:23:57.124892 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:57.125308 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:57.132570 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 2097152 B, Time: 5521 us, 362.253 MiB/s, 3.0388 Gbps
+I1103 05:23:59.137084 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:23:59.137580 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:23:59.147771 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 4194304 B, Time: 7907 us, 505.881 MiB/s, 4.24364 Gbps
+I1103 05:24:01.154592 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:01.155259 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:01.162779 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 8388608 B, Time: 6094 us, 1312.77 MiB/s, 11.0123 Gbps
+I1103 05:24:03.175055 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:03.176148 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:03.186323 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 16777216 B, Time: 9423 us, 1697.97 MiB/s, 14.2436 Gbps
+I1103 05:24:05.203660 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:05.205724 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:05.215896 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 33554432 B, Time: 9962 us, 3212.21 MiB/s, 26.9459 Gbps
+I1103 05:24:07.246837 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:07.250808 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:07.269762 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 67108864 B, Time: 18672 us, 3427.59 MiB/s, 28.7527 Gbps
+I1103 05:24:09.328542 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:09.335986 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:09.371608 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 134217728 B, Time: 35095 us, 3647.24 MiB/s, 30.5953 Gbps
+I1103 05:24:11.498605 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:11.513110 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:11.583040 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 268435456 B, Time: 68890 us, 3716.07 MiB/s, 31.1726 Gbps
+I1103 05:24:13.850903 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:13.876768 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:14.012230 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 536870912 B, Time: 133478 us, 3835.84 MiB/s, 32.1773 Gbps
+I1103 05:24:16.479740 2652277 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:24:16.535209 2652277 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:24:16.807006 2652277 client.cpp:302] [Mode: g2h2g] [End-to-end] Data Size: 1073741824 B, Time: 268383 us, 3815.44 MiB/s, 32.0063 Gbps
+[CtrlSocketManager] Closed control connection for 45.76.20.37
+[CtrlSocketManager] closeConnection: no entry for 45.76.20.37
+Control connection closed.
+[0;33mW1103 05:24:18.901768 2652277 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:24:18.901799 2652277 communicator.cpp:21] finished
+[m[0;33mW1103 05:24:18.901813 2652277 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:24:18.901823 2652277 communicator.cpp:21] finished
+[mClient finished all transfers

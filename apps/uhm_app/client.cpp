@@ -28,7 +28,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-size_t buffer_size = 2048ULL * 32 * 1024;
+size_t buffer_size = 1024ULL * 1024 * 4; // 4 MB
 const int device_id = 0;
 const int gpu_port = 2025;
 const int cpu_port = 2026;

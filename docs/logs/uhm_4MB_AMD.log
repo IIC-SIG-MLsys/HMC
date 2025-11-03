@@ -1,0 +1,65 @@
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I1103 05:25:51.107970 2657171 client.cpp:236] Running in mode: uhm
+I1103 05:25:51.108069 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:25:51.108121 2657171 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:25:51.142418 2657171 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2025 (QPs: 1)
+I1103 05:25:51.142740 2657171 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:25:51.143728 2657171 rdma_client.cpp:219]   local QP[0] num = 130077
+[m[0;33mW1103 05:25:51.143743 2657171 rdma_client.cpp:222]   remote QP[0] num = 13213
+[mI1103 05:25:51.143756 2657171 rdma_client.cpp:165] Client:: Connection established successfully
+I1103 05:25:51.150018 2657171 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2026 (QPs: 1)
+I1103 05:25:51.238713 2657171 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:25:51.238780 2657171 rdma_client.cpp:219]   local QP[0] num = 130078
+[m[0;33mW1103 05:25:51.238793 2657171 rdma_client.cpp:222]   remote QP[0] num = 13214
+[mI1103 05:25:51.238806 2657171 rdma_client.cpp:165] Client:: Connection established successfully
+Connected to control server.
+I1103 05:25:55.240141 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:25:55.447813 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 1024 B, Time: 29 us, 33.6746 MiB/s, 0.282483 Gbps
+I1103 05:25:57.450675 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:25:57.450816 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 2048 B, Time: 26 us, 75.1202 MiB/s, 0.630154 Gbps
+I1103 05:25:59.454401 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:25:59.454562 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 4096 B, Time: 25 us, 156.25 MiB/s, 1.31072 Gbps
+I1103 05:26:01.459690 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:01.459848 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 8192 B, Time: 30 us, 260.417 MiB/s, 2.18453 Gbps
+I1103 05:26:03.464830 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:03.465005 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 16384 B, Time: 41 us, 381.098 MiB/s, 3.19688 Gbps
+I1103 05:26:05.469255 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:05.482549 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 32768 B, Time: 78 us, 400.641 MiB/s, 3.36082 Gbps
+I1103 05:26:07.485867 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:07.486151 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 65536 B, Time: 133 us, 469.925 MiB/s, 3.94202 Gbps
+I1103 05:26:09.490720 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:09.491125 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 131072 B, Time: 260 us, 480.769 MiB/s, 4.03298 Gbps
+I1103 05:26:11.496143 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:11.496945 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 262144 B, Time: 644 us, 388.199 MiB/s, 3.25645 Gbps
+I1103 05:26:13.501557 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:13.503123 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 524288 B, Time: 1378 us, 362.845 MiB/s, 3.04376 Gbps
+I1103 05:26:15.506533 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:15.509574 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 1048576 B, Time: 2749 us, 363.769 MiB/s, 3.05151 Gbps
+I1103 05:26:17.512130 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:17.517396 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 2097152 B, Time: 4788 us, 417.711 MiB/s, 3.50401 Gbps
+I1103 05:26:19.521574 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:19.529313 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 4194304 B, Time: 7244 us, 552.181 MiB/s, 4.63203 Gbps
+I1103 05:26:21.536695 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:21.545624 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 8388608 B, Time: 8269 us, 967.469 MiB/s, 8.11572 Gbps
+I1103 05:26:23.556025 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:23.563090 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 16777216 B, Time: 6007 us, 2663.56 MiB/s, 22.3436 Gbps
+I1103 05:26:25.581210 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:25.592679 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 33554432 B, Time: 9789 us, 3268.98 MiB/s, 27.4222 Gbps
+I1103 05:26:27.625687 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:27.638432 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 67108864 B, Time: 9490 us, 6743.94 MiB/s, 56.5723 Gbps
+I1103 05:26:29.702247 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:29.723538 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 134217728 B, Time: 15252 us, 8392.34 MiB/s, 70.4001 Gbps
+I1103 05:26:31.848547 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:31.888281 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 268435456 B, Time: 28730 us, 8910.55 MiB/s, 74.7471 Gbps
+I1103 05:26:34.137797 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:34.219044 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 536870912 B, Time: 60322 us, 8487.78 MiB/s, 71.2007 Gbps
+I1103 05:26:36.699417 2657171 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:26:36.864400 2657171 client.cpp:302] [Mode: uhm] [Network only] Data Size: 1073741824 B, Time: 112787 us, 9079.06 MiB/s, 76.1607 Gbps
+[CtrlSocketManager] Closed control connection for 45.76.20.37
+[CtrlSocketManager] closeConnection: no entry for 45.76.20.37
+Control connection closed.
+[0;33mW1103 05:26:38.960769 2657171 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:26:38.960803 2657171 communicator.cpp:21] finished
+[m[0;33mW1103 05:26:38.960817 2657171 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:26:38.960830 2657171 communicator.cpp:21] finished
+[mClient finished all transfers

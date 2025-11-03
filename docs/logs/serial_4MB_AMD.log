@@ -1,0 +1,65 @@
+WARNING: Logging before InitGoogleLogging() is written to STDERR
+I1103 05:29:17.568600 2663736 client.cpp:236] Running in mode: serial
+I1103 05:29:17.568719 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:17.568786 2663736 host_memory.cpp:40] Allocate memory using new malloc.
+I1103 05:29:17.606783 2663736 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2025 (QPs: 1)
+I1103 05:29:17.607129 2663736 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:29:17.608474 2663736 rdma_client.cpp:219]   local QP[0] num = 8008
+[m[0;33mW1103 05:29:17.608489 2663736 rdma_client.cpp:222]   remote QP[0] num = 13217
+[mI1103 05:29:17.608500 2663736 rdma_client.cpp:165] Client:: Connection established successfully
+I1103 05:29:17.614585 2663736 rdma_client.cpp:157] Client:: Connected to 45.76.20.37:2026 (QPs: 1)
+I1103 05:29:17.698716 2663736 rdma_client.cpp:215] [RDMAClient] exchangeMetaData: local_qps=1, remote_qps=1
+[0;33mW1103 05:29:17.698774 2663736 rdma_client.cpp:219]   local QP[0] num = 8009
+[m[0;33mW1103 05:29:17.698789 2663736 rdma_client.cpp:222]   remote QP[0] num = 13218
+[mI1103 05:29:17.698803 2663736 rdma_client.cpp:165] Client:: Connection established successfully
+Connected to control server.
+I1103 05:29:21.700075 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:21.911976 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 1024 B, Time: 30 us, 32.5521 MiB/s, 0.273067 Gbps
+I1103 05:29:23.920339 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:23.920547 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 2048 B, Time: 33 us, 59.1856 MiB/s, 0.496485 Gbps
+I1103 05:29:25.924892 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:25.925078 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 4096 B, Time: 28 us, 139.509 MiB/s, 1.17029 Gbps
+I1103 05:29:27.930711 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:27.930931 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 8192 B, Time: 24 us, 325.521 MiB/s, 2.73067 Gbps
+I1103 05:29:29.937741 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:29.937963 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 16384 B, Time: 26 us, 600.962 MiB/s, 5.04123 Gbps
+I1103 05:29:31.952500 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:31.969040 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 32768 B, Time: 43 us, 726.744 MiB/s, 6.09637 Gbps
+I1103 05:29:33.972394 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:33.972697 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 65536 B, Time: 89 us, 702.247 MiB/s, 5.89088 Gbps
+I1103 05:29:35.977523 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:35.977921 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 131072 B, Time: 188 us, 664.894 MiB/s, 5.57753 Gbps
+I1103 05:29:37.982733 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:37.983510 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 262144 B, Time: 547 us, 457.038 MiB/s, 3.83392 Gbps
+I1103 05:29:39.988200 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:39.989619 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 524288 B, Time: 1169 us, 427.716 MiB/s, 3.58794 Gbps
+I1103 05:29:41.993894 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:41.996651 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 1048576 B, Time: 2405 us, 415.8 MiB/s, 3.48799 Gbps
+I1103 05:29:43.999315 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:44.004187 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 2097152 B, Time: 4350 us, 459.77 MiB/s, 3.85683 Gbps
+I1103 05:29:46.009208 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:46.016626 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 4194304 B, Time: 6853 us, 583.686 MiB/s, 4.89631 Gbps
+I1103 05:29:48.025524 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:48.034416 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 8388608 B, Time: 8149 us, 981.716 MiB/s, 8.23523 Gbps
+I1103 05:29:50.044715 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:50.052371 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 16777216 B, Time: 6496 us, 2463.05 MiB/s, 20.6616 Gbps
+I1103 05:29:52.071085 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:52.082937 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 33554432 B, Time: 9991 us, 3202.88 MiB/s, 26.8677 Gbps
+I1103 05:29:54.117137 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:54.129721 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 67108864 B, Time: 9158 us, 6988.43 MiB/s, 58.6232 Gbps
+I1103 05:29:56.193550 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:56.221729 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 134217728 B, Time: 21586 us, 5929.77 MiB/s, 49.7425 Gbps
+I1103 05:29:58.347307 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:29:58.387825 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 268435456 B, Time: 28614 us, 8946.67 MiB/s, 75.0501 Gbps
+I1103 05:30:00.632176 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:30:00.721064 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 536870912 B, Time: 61078 us, 8382.72 MiB/s, 70.3194 Gbps
+I1103 05:30:03.199738 2663736 rocm_memory.cpp:26] Allocate memory using hipMalloc.
+I1103 05:30:03.370041 2663736 client.cpp:302] [Mode: serial] [End-to-end] Data Size: 1073741824 B, Time: 114203 us, 8966.49 MiB/s, 75.2164 Gbps
+[CtrlSocketManager] Closed control connection for 45.76.20.37
+[CtrlSocketManager] closeConnection: no entry for 45.76.20.37
+Control connection closed.
+[0;33mW1103 05:30:05.461392 2663736 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:30:05.462767 2663736 communicator.cpp:21] finished
+[m[0;33mW1103 05:30:05.462780 2663736 communicator.cpp:19] close communicator
+[m[0;33mW1103 05:30:05.462791 2663736 communicator.cpp:21] finished
+[mClient finished all transfers
