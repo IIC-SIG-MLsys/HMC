@@ -243,7 +243,7 @@ int main(int argc, char *argv[]) {
       std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
 
-  int num_channels = 4;
+  int num_channels = 1;
   gpu_comm = new Communicator(gpu_buffer, num_channels);
   cpu_comm = new Communicator(cpu_buffer, num_channels);
 
