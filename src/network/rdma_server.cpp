@@ -126,7 +126,6 @@ cleanup:
 /* -------------------------------------------------------------------------- */
 
 std::unique_ptr<RDMAEndpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
-  int ret = -1;
   struct rdma_cm_event *cm_event = nullptr;
 
   logDebug("buffer: buffer->ptr %p, buffer->size %zu", buffer->ptr,
