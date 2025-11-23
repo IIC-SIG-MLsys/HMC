@@ -12,17 +12,21 @@ def run_receiver():
     comm = hmc.Communicator(conn_buf)
 
     # 启动服务端
-    comm.initServer("192.168.2.243", 12025)
+    comm.initServer("192.168.2.243", 12025, hmc.ConnType.RDMA)
     print("Receiver: server started, waiting for connection...")
     
-    time.sleep(5)
     # # 等待客户端连接
     # while comm.checkConn("192.168.2.243") != hmc.status_t.SUCCESS:
     #     print(comm.checkConn("192.168.2.243"))
     #     time.sleep(2)
 
     # 接收数据
-    comm.recv("192.168.2.243", 0, 1024)
+    #    py::arg("ip"), py::arg("recv_buf"),
+    #    py::arg("buf_size"), py::arg("buf_type"), py::arg("flag"),
+    #    py::arg("connType") = hmc::ConnType::RDMA)
+    recv_buf = memoryview(buf)
+    flag = 0
+    comm.recvDataFrom("192.168.2.243", conn_buf, 1024, hmc.MemoryType.CPU, flag, hmc.ConnType.RDMA)
     print("Receiver: data received.")
 
     # 读取数据到 Python
@@ -56,7 +60,10 @@ def run_sender():
     conn_buf.writeFromCpu(mv, 1024)
 
     # 发送数据
-    comm.send("192.168.2.243", 0, 1024)
+    #    py::arg("ip"), py::arg("send_buf"),
+    #    py::arg("buf_size"), py::arg("buf_type"),
+    #    py::arg("connType") = hmc::ConnType::RDMA)
+    comm.sendDataTo("192.168.2.243", conn_buf, 1024, hmc.MemoryType.CPU, hmc.ConnType.RDMA)
     print("Sender: data sent.")
 
 if __name__ == "__main__":

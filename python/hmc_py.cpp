@@ -209,9 +209,25 @@ PYBIND11_MODULE(hmc, m) {
           "    bias (int): Offset in buffer (default 0)");
 
   // Communicator 类绑定
-  py::class_<hmc::Communicator>(m, "Communicator")
-      .def(py::init<std::shared_ptr<hmc::ConnBuffer>>(),
-           "Constructor for Communicator", py::arg("buffer"))
+  py::class_<hmc::Communicator, std::shared_ptr<hmc::Communicator>>(m, "Communicator")
+      // Bind the actual C++ constructor: Communicator(std::shared_ptr<ConnBuffer>, size_t num_chs=1)
+      .def(py::init<std::shared_ptr<hmc::ConnBuffer>, size_t>(),
+           "Constructor for Communicator",
+           py::arg("buffer"), py::arg("num_chs") = 1)
+      // Convenience overload: accept a Python object that can be cast to
+      // std::shared_ptr<ConnBuffer> (allows passing a ConnBuffer instance
+      // created on the Python side). Also allow optional num_chs.
+      .def(py::init([](py::object buf, size_t num_chs) {
+             try {
+               auto sp = buf.cast<std::shared_ptr<hmc::ConnBuffer>>();
+               return std::make_shared<hmc::Communicator>(sp, num_chs);
+             } catch (const std::exception &e) {
+               throw std::runtime_error(
+                   std::string("Communicator constructor expects a hmc.ConnBuffer or shared_ptr<ConnBuffer>: ") + e.what());
+             }
+           }),
+           py::arg("buffer"), py::arg("num_chs") = 1,
+           "Constructor wrapper that accepts a Python ConnBuffer and optional num_chs")
       .def("writeTo", &hmc::Communicator::writeTo, "Send data to remote",
            py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
            py::arg("connType") = hmc::ConnType::RDMA)
