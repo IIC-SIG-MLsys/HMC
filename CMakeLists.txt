@@ -13,6 +13,21 @@ if(BUILD_PYTHON_MOD)
     set(BUILD_STATIC_LIB ON)
 endif()
 
+
+
+# ==============================
+# UCX 全局支持
+# ==============================
+set(UCX_ROOT /usr/local/ucx)
+if(EXISTS "${UCX_ROOT}/include/ucp/api/ucp.h")
+    message(STATUS "✅ UCX include dir detected: ${UCX_ROOT}/include")
+    include_directories(${UCX_ROOT}/include)
+    link_directories(${UCX_ROOT}/lib)
+else()
+    message(WARNING "⚠ UCX not found at ${UCX_ROOT}. If installed elsewhere, update UCX_ROOT.")
+endif()
+
+
 # 查找平台支持模块
 include(FindRocm)
 include(FindCuda)
