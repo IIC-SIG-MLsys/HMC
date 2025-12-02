@@ -28,7 +28,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-size_t buffer_size = 1024ULL * 1024 * 4; // 4 MB
+size_t buffer_size = 1024ULL * 1024 * 17; // 4 MB
 const int device_id = 0;
 const int gpu_port = 2025;
 const int cpu_port = 2026;
@@ -280,7 +280,7 @@ int main(int argc, char *argv[]) {
 
   sleep(3);
 
-  for (int power = 10; power <= 30; ++power) {
+  for (int power = 5; power <= 26; ++power) {
     size_t total_size = (size_t)1 << power;
     std::vector<uint8_t> host_data(total_size, 'A');
 
