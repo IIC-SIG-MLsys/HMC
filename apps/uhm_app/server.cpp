@@ -1,6 +1,7 @@
 #include <arpa/inet.h>
 #include <chrono>
-#include <cmath>
+#include <cstdlib>
+#include <cstring>
 #include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
@@ -23,7 +24,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-const size_t buffer_size = 1024ULL * 1024 * 17; // 4 MB
+const size_t buffer_size = 1024ULL * 1024 * 128; // 128 MB
 const int device_id = 0;
 const int gpu_port = 2025;
 const int cpu_port = 2026;
@@ -48,6 +49,22 @@ struct Context {
 
 using steady_clock_t = std::chrono::steady_clock;
 
+#include <cuda_runtime.h>
+#define CUDA_OK(call)                                                          \
+  do {                                                                         \
+    cudaError_t _e = (call);                                                   \
+    if (_e != cudaSuccess) {                                                   \
+      LOG(ERROR) << "CUDA error: " << cudaGetErrorString(_e)                   \
+                 << " @" << __FILE__ << ":" << __LINE__;                      \
+    }                                                                          \
+  } while (0)
+
+static inline void cuda_barrier(int dev) {
+  CUDA_OK(cudaSetDevice(dev));
+  CUDA_OK(cudaGetLastError());
+  CUDA_OK(cudaDeviceSynchronize());
+}
+
 // 环境变量读取
 std::string get_env_or_default(const char *var_name,
                                const std::string &default_val) {
@@ -64,8 +81,7 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   }
 
   int opt = 1;
-  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
-             sizeof(opt));
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
 
   sockaddr_in address;
   address.sin_family = AF_INET;
@@ -85,17 +101,15 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
     exit(EXIT_FAILURE);
   }
 
-  LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":"
-            << port;
+  LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":" << port;
   int addrlen = sizeof(address);
-  int new_socket =
-      accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+  int new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
   if (new_socket < 0) {
     perror("accept failed");
     exit(EXIT_FAILURE);
   }
 
-  close(server_fd); // 监听完即可关闭
+  close(server_fd);
   LOG(INFO) << "TCP control connection established.";
   return new_socket;
 }
@@ -111,56 +125,39 @@ void close_control_socket(int &sock) {
 bool wait_for_control_message(int socket_fd) {
   char buffer[16] = {0};
   int valread = read(socket_fd, buffer, sizeof(buffer));
-  if (valread <= 0)
-    return false;
+  if (valread <= 0) return false;
   return std::string(buffer).find("Finished") != std::string::npos;
 }
 
-// ---------- 各模式接收 ----------
-
-// ✅ uhm：GPU直连接收
-void recv_channel_slice_uhm(Context ctx) {
-  size_t flags = 0;
-  if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size,
-                             MemoryType::DEFAULT,
-                             &flags) != status_t::SUCCESS) {
+// ---------- UCX recv ----------
+void recv_channel_slice_ucx(Context ctx) {
+  if (!wait_for_control_message(ctrl_socket_fd)) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UHM] Receive failed.";
+    LOG(ERROR) << "[UCX] control message timeout.";
+    return;
   }
-}
 
-// ✅ serial：分段接收
-void recv_channel_slice_serial(Context ctx) {
-  const size_t chunk_size = buffer_size / 2;
-  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
-
-  for (size_t i = 0; i < num_chunks; ++i) {
-    if (!wait_for_control_message(ctrl_socket_fd)) {
-      LOG(ERROR) << "Serial mode: control message timeout.";
-      return;
-    }
+  if (cpu_buffer->readToCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[UCX] readToCpu failed.";
+    return;
   }
+
+  cuda_barrier(device_id);
+
+  // H2D：这一步若是 async/或曾经非法，会在 barrier 处暴露，不会拖到 free
+  gpu_mem_op->copyHostToDevice(ctx.gpu_data_ptr, ctx.cpu_data_ptr, ctx.size);
+
+  cuda_barrier(device_id);
+
+  LOG(INFO) << "[UCX] recv head=" << std::hex
+            << (int)((unsigned char*)ctx.cpu_data_ptr)[0] << " "
+            << (int)((unsigned char*)ctx.cpu_data_ptr)[1] << " "
+            << (int)((unsigned char*)ctx.cpu_data_ptr)[2] << " "
+            << (int)((unsigned char*)ctx.cpu_data_ptr)[3]
+            << std::dec;
 }
 
-// ✅ g2h2g：分段接收
-void recv_channel_slice_g2h2g(Context ctx) {
-  const size_t chunk_size = buffer_size / 2;
-  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
-
-  for (size_t i = 0; i < num_chunks; ++i) {
-    if (!wait_for_control_message(ctrl_socket_fd)) {
-      LOG(ERROR) << "G2H2G mode: control message timeout.";
-      return;
-    }
-  }
-}
-
-// ✅ rdma_cpu：被动接收 RDMA write + control 信号
-void recv_channel_slice_rdma_cpu(Context ctx) {
-  wait_for_control_message(ctrl_socket_fd);
-}
-
-// ---------- 模式选择 ----------
 std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
@@ -175,31 +172,6 @@ std::string get_mode_from_args(int argc, char *argv[]) {
   return "uhm";
 }
 
-
-// UCX 模式：先收进 CPU buffer，再拷到 GPU
-void recv_channel_slice_ucx(Context ctx) {
-  size_t flags = 0;
-
-  // 1. 用 UCX / IB 把数据收进 CPU buffer
-  if (gpu_comm->recvDataFrom(
-          client_ip,
-          ctx.cpu_data_ptr,      // ✅ 收到 CPU 内存
-          ctx.size,
-          MemoryType::CPU,       // 标记为 CPU 内存
-          &flags,
-          ConnType::UCX) != status_t::SUCCESS) {
-
-    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] Receive failed.";
-    return;
-  }
-
-  // 2. 拷到 GPU，这样后面的校验逻辑仍然统一走 GPU -> Host
-  gpu_mem_op->copyHostToDevice(ctx.gpu_data_ptr, ctx.cpu_data_ptr, ctx.size);
-}
-
-
-// ---------- 主程序 ----------
 int main(int argc, char *argv[]) {
   FLAGS_colorlogtostderr = true;
   FLAGS_alsologtostderr = true;
@@ -212,93 +184,56 @@ int main(int argc, char *argv[]) {
   tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
   std::mutex log_mutex;
-  gpu_buffer =
-      std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
+  gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
-  
+
   int num_channels = 1;
   gpu_comm = new Communicator(gpu_buffer, num_channels);
   cpu_comm = new Communicator(cpu_buffer, num_channels);
 
-  // 根据 mode 选择 GPU 通道的后端类型（RDMA 或 UCX），CPU 仍然用 RDMA
-  ConnType gpu_server_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
-  ConnType cpu_server_type = ConnType::RDMA;
-
-  if (gpu_comm->initServer(server_ip, gpu_port, gpu_server_type) !=
-          status_t::SUCCESS ||
-      cpu_comm->initServer(server_ip, cpu_port, cpu_server_type) !=
-          status_t::SUCCESS) {
-    LOG(ERROR) << "Failed to init RDMA servers.";
+  if (mode == "ucx") {
+    if (cpu_comm->initServer(server_ip, gpu_port, ConnType::UCX) != status_t::SUCCESS) {
+      LOG(ERROR) << "[Server] UCX initServer failed.";
+      return -1;
+    }
+  } else {
+    LOG(ERROR) << "This patched server file focuses on UCX mode. Use your original file for other modes.";
     return -1;
   }
 
-  if (mode != "ucx") {
-    ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
-  } else {
-    ctrl_socket_fd = -1;
-  }
+  ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
 
-    // ---------- 在 UCX 模式下，服务端也主动对 client 建立 UCX 连接 ----------
-  if (mode == "ucx") {
-    int retry = 0;
-    while (retry < 10) {
-      auto st = gpu_comm->connectTo(client_ip, gpu_port, ConnType::UCX);
-      if (st == status_t::SUCCESS) {
-        LOG(INFO) << "[Server] UCX connectTo(" << client_ip << ") success.";
-        break;
-      }
-      LOG(WARNING) << "[Server] UCX connectTo(" << client_ip
-                   << ") failed, retry " << retry;
-      std::this_thread::sleep_for(std::chrono::seconds(1));
-      ++retry;
-    }
-    if (retry == 10) {
-      LOG(ERROR) << "[Server] UCX connectTo(client_ip) failed after retries.";
-      return -1;
-    }
-  }
-
-  // 模式函数选择
-  void (*recv_func)(Context) = nullptr;
-  if (mode == "serial")
-    recv_func = recv_channel_slice_serial;
-  else if (mode == "g2h2g")
-    recv_func = recv_channel_slice_g2h2g;
-  else if (mode == "rdma_cpu")
-    recv_func = recv_channel_slice_rdma_cpu;
-  else if (mode == "ucx")
-    recv_func = recv_channel_slice_ucx;
-  else
-    recv_func = recv_channel_slice_uhm;
-
-  // 主循环
   for (int power = 5; power <= 26; ++power) {
     size_t total_size = size_t(1) << power;
     std::vector<uint8_t> host_data(total_size, 0);
-    void *gpu_ptr;
+
+    // 关键：每轮开始都把 device 锁死 + 清 error
+    cuda_barrier(device_id);
+
+    void *gpu_ptr = nullptr;
+    CUDA_OK(cudaSetDevice(device_id));
     gpu_mem_op->allocateBuffer(&gpu_ptr, total_size);
+    cuda_barrier(device_id);
 
     Context ctx = {host_data.data(), gpu_ptr, total_size, &log_mutex};
-    recv_func(ctx);
+    recv_channel_slice_ucx(ctx);
 
-    // 数据完整性验证（可选）
-    if (mode == "rdma_cpu")
-      continue;
-    else if (mode != "g2h2g")
-      gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
+    // D2H 校验（这一步也可能是 async，所以必须同步）
+    gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
+    cuda_barrier(device_id);
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
-      if (host_data[i] != 'A') {
-        valid = false;
-        break;
-      }
+      if (host_data[i] != 'A') { valid = false; break; }
     }
 
-    LOG(INFO) << "[Size " << total_size
-              << " B] Data Integrity: " << (valid ? "PASS" : "FAIL");
+    LOG(INFO) << "[Size " << total_size << " B] Data Integrity: " << (valid ? "PASS" : "FAIL");
 
+    cuda_barrier(device_id);
+    CUDA_OK(cudaSetDevice(device_id));
     gpu_mem_op->freeBuffer(gpu_ptr);
+    cuda_barrier(device_id);
+
     std::this_thread::sleep_for(std::chrono::seconds(1));
     LOG(INFO) << "--------------------------------------------";
   }

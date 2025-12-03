@@ -1,144 +1,39 @@
 #include "net_ucx.h"
 
 #include "../utils/log.h"
-#include <hmc.h>
 
+#include <arpa/inet.h>
 #include <cstring>
+#include <thread>
+#include <chrono>
 
 namespace hmc {
 
-// ======== UCX 状态到 status_t 的简单转换 ========
-
-static status_t ucs_to_status(ucs_status_t st) {
-  switch (st) {
-  case UCS_OK:
-    return status_t::SUCCESS;
-  case UCS_ERR_UNSUPPORTED:
-    return status_t::UNSUPPORT;
-  case UCS_ERR_TIMED_OUT:
-    return status_t::TIMEOUT;
-  default:
-    return status_t::ERROR;
+// 同 server：保证一致
+static std::uint16_t channel_from_ip(const std::string &ip) {
+  std::uint32_t h = 2166136261u;
+  for (unsigned char c : ip) {
+    h ^= c;
+    h *= 16777619u;
   }
+  std::uint16_t ch = static_cast<std::uint16_t>((h ^ (h >> 16)) & 0xFFFFu);
+  return (ch == 0) ? 1 : ch;
 }
 
-// ======== UCXContext 实现 ========
-
-UCXContext::UCXContext() = default;
-
-UCXContext::~UCXContext() { finalize(); }
-
-status_t UCXContext::init() {
-  if (initialized_) {
-    return status_t::SUCCESS;
+static bool make_sockaddr_v4(const std::string &ip, uint16_t port,
+                             sockaddr_storage &ss, socklen_t &ss_len) {
+  std::memset(&ss, 0, sizeof(ss));
+  sockaddr_in *sin = reinterpret_cast<sockaddr_in *>(&ss);
+  sin->sin_family = AF_INET;
+  sin->sin_port = htons(port);
+  if (inet_pton(AF_INET, ip.c_str(), &sin->sin_addr) != 1) {
+    return false;
   }
-
-  ucp_config_t *config = nullptr;
-  ucs_status_t st = ucp_config_read(nullptr, nullptr, &config);
-  if (st != UCS_OK) {
-    logError("ucp_config_read failed: %d", st);
-    return ucs_to_status(st);
-  }
-
-  // === 关键：强制使用 IB RC，而不是 TCP ===
-  // 等价于环境变量：UCX_TLS=rc,self,sm
-  ucs_status_t st2 = ucp_config_modify(config, "TLS", "rc,self,sm");
-  if (st2 != UCS_OK) {
-    logError("ucp_config_modify(TLS=rc,self,sm) failed: %d", st2);
-    ucp_config_release(config);
-    return ucs_to_status(st2);
-  }
-  // 如果你以后想通过环境变量控制，就把上面这段注释掉也行
-
-  ucp_params_t params;
-  std::memset(&params, 0, sizeof(params));
-  params.field_mask = UCP_PARAM_FIELD_FEATURES;
-  params.features   = UCP_FEATURE_TAG;  // 只用 TAG API
-
-  ucp_context_h ctx = nullptr;
-  st = ucp_init(&params, config, &ctx);
-  ucp_config_release(config);
-  if (st != UCS_OK) {
-    logError("ucp_init failed: %d", st);
-    return ucs_to_status(st);
-  }
-
-  ucp_worker_params_t wparams;
-  std::memset(&wparams, 0, sizeof(wparams));
-  wparams.field_mask  = UCP_WORKER_PARAM_FIELD_THREAD_MODE;
-  wparams.thread_mode = UCS_THREAD_MODE_SINGLE; // 避免 multi-thread warning
-
-  ucp_worker_h worker = nullptr;
-  st = ucp_worker_create(ctx, &wparams, &worker);
-  if (st != UCS_OK) {
-    logError("ucp_worker_create failed: %d", st);
-    ucp_cleanup(ctx);
-    return ucs_to_status(st);
-  }
-
-  context_    = ctx;
-  worker_     = worker;
-  initialized_ = true;
-
-  logInfo("UCXContext initialized (TAG mode, TLS=rc,self,sm)");
-  return status_t::SUCCESS;
+  ss_len = sizeof(sockaddr_in);
+  return true;
 }
 
-
-void UCXContext::finalize() {
-  if (!initialized_)
-    return;
-
-  if (worker_) {
-    ucp_worker_destroy(worker_);
-    worker_ = nullptr;
-  }
-
-  if (context_) {
-    ucp_cleanup(context_);
-    context_ = nullptr;
-  }
-
-  initialized_ = false;
-}
-
-status_t UCXContext::packWorkerAddress(std::vector<std::uint8_t> &out) {
-  if (!initialized_) {
-    auto s = init();
-    if (s != status_t::SUCCESS)
-      return s;
-  }
-
-  ucp_address_t *addr = nullptr;
-  size_t addr_len = 0;
-  ucs_status_t st = ucp_worker_get_address(worker_, &addr, &addr_len);
-  if (st != UCS_OK) {
-    logError("ucp_worker_get_address failed: %d", st);
-    return ucs_to_status(st);
-  }
-
-  out.assign(reinterpret_cast<std::uint8_t *>(addr),
-             reinterpret_cast<std::uint8_t *>(addr) + addr_len);
-
-  ucp_worker_release_address(worker_, addr);
-  return status_t::SUCCESS;
-}
-
-void UCXContext::progress() {
-  std::lock_guard<std::mutex> lock(worker_mutex_);
-  if (worker_) {
-    ucp_worker_progress(worker_);
-  }
-}
-
-// ======== UCXClient 实现 ========
-
-// 控制通道上的握手结构（必须是 POD）
-struct UCXHandshake {
-  uint32_t worker_addr_len;
-};
-
-// 静态成员定义
+// 静态成员
 std::weak_ptr<UCXContext> UCXClient::global_ctx_;
 
 UCXClient::UCXClient(std::shared_ptr<ConnBuffer> buffer)
@@ -148,88 +43,118 @@ UCXClient::UCXClient(std::shared_ptr<ConnBuffer> buffer)
     shared = std::make_shared<UCXContext>();
     global_ctx_ = shared;
   }
-  ctx_ = shared;
+  ctx_ = std::move(shared);
 }
 
 UCXClient::~UCXClient() = default;
 
 std::unique_ptr<Endpoint> UCXClient::connect(std::string ip, uint16_t port) {
-  (void)port; // 控制连接已经在 Communicator::connectTo 中建立，这里不再使用
-
   if (!ctx_) {
     logError("UCXClient::connect: null UCXContext");
     return nullptr;
   }
-
-  auto st = ctx_->init();
-  if (st != status_t::SUCCESS) {
+  if (ctx_->init() != status_t::SUCCESS) {
     logError("UCXClient::connect: UCXContext init failed");
     return nullptr;
   }
 
-  CtrlSocketManager &ctrl = CtrlSocketManager::instance();
-
-  // 打包本端 worker 地址
-  std::vector<std::uint8_t> local_worker_addr;
-  if (ctx_->packWorkerAddress(local_worker_addr) != status_t::SUCCESS) {
-    logError("UCXClient::connect: packWorkerAddress failed");
+  // 1) 创建 client endpoint：sockaddr connect 到 server listener
+  sockaddr_storage ss;
+  socklen_t ss_len = 0;
+  if (!make_sockaddr_v4(ip, port, ss, ss_len)) {
+    logError("UCXClient::connect: invalid ip %s", ip.c_str());
     return nullptr;
   }
 
-  UCXHandshake local{};
-  local.worker_addr_len =
-      static_cast<uint32_t>(local_worker_addr.size());
-
-  // 对称握手：双方都先 send 再 recv，不会死锁
-  if (!ctrl.sendCtrlStruct(ip, local)) {
-    logError("UCXClient::connect: send local handshake failed");
-    return nullptr;
-  }
-
-  UCXHandshake remote{};
-  if (!ctrl.recvCtrlStruct(ip, remote)) {
-    logError("UCXClient::connect: recv remote handshake failed");
-    return nullptr;
-  }
-
-  // 发送本端 worker 地址
-  if (!ctrl.sendCtrlMsg(ip, CTRL_STRUCT, local_worker_addr.data(),
-                        local_worker_addr.size())) {
-    logError("UCXClient::connect: send local worker addr failed");
-    return nullptr;
-  }
-
-  // 接收对端 worker 地址
-  CtrlMsgHeader hdr{};
-  std::vector<std::uint8_t> remote_worker_addr;
-  if (!ctrl.recvCtrlMsg(ip, hdr, remote_worker_addr)) {
-    logError("UCXClient::connect: recv remote worker addr failed");
-    return nullptr;
-  }
-  if (remote_worker_addr.size() != remote.worker_addr_len) {
-    logError("UCXClient::connect: remote worker addr length mismatch");
-    return nullptr;
-  }
-
-  // 用对端 worker 地址创建 EP
   ucp_ep_params_t ep_params;
   std::memset(&ep_params, 0, sizeof(ep_params));
-  ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS;
-  ep_params.address =
-      reinterpret_cast<const ucp_address_t *>(remote_worker_addr.data());
+  ep_params.field_mask = UCP_EP_PARAM_FIELD_FLAGS |
+                         UCP_EP_PARAM_FIELD_SOCK_ADDR;
+  ep_params.flags      = UCP_EP_PARAMS_FLAGS_CLIENT_SERVER;
+  ep_params.sockaddr.addr    = reinterpret_cast<const sockaddr *>(&ss);
+  ep_params.sockaddr.addrlen = ss_len;
 
   ucp_ep_h ep = nullptr;
-  ucs_status_t ucs_st =
-      ucp_ep_create(ctx_->worker(), &ep_params, &ep);
-  if (ucs_st != UCS_OK) {
-    logError("ucp_ep_create failed: %d", ucs_st);
+  ucs_status_t ust = ucp_ep_create(ctx_->worker(), &ep_params, &ep);
+  if (ust != UCS_OK) {
+    logError("UCXClient::connect: ucp_ep_create(connect) failed: %d", ust);
     return nullptr;
   }
 
-  auto endpoint = std::make_unique<UCXEndpoint>(ctx_, ep);
+  auto endpoint = std::make_unique<UCXEndpoint>(ctx_, ep, buffer_);
   endpoint->role = EndpointType::Client;
 
-  logInfo("UCXClient::connect success to %s:%u", ip.c_str(), port);
+  // 2) UCX TAG 握手：交换 remote base/size/rkey（与 server 完全一致）
+  const std::uint16_t ch = 1;
+
+  UcxRemoteMemInfo local_hdr{};
+  std::vector<std::uint8_t> local_rkey;
+  if (endpoint->exportLocalMemInfo(local_hdr, local_rkey) != status_t::SUCCESS) {
+    logError("UCXClient::connect: exportLocalMemInfo failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  // send hdr -> recv hdr
+  if (endpoint->tagSend(&local_hdr, sizeof(local_hdr), ch, /*seq=*/1) != status_t::SUCCESS) {
+    logError("UCXClient::connect: tagSend(local_hdr) failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  UcxRemoteMemInfo remote_hdr{};
+  size_t got = 0;
+  if (endpoint->tagRecv(&remote_hdr, sizeof(remote_hdr), &got, ch, /*seq=*/1) != status_t::SUCCESS) {
+    logError("UCXClient::connect: tagRecv(remote_hdr) failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+  if (got != sizeof(remote_hdr)) {
+    logError("UCXClient::connect: remote_hdr size mismatch got=%zu expect=%zu",
+             got, sizeof(remote_hdr));
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+  if (remote_hdr.rkey_len == 0) {
+    logError("UCXClient::connect: remote_hdr.rkey_len == 0");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  // send rkey -> recv rkey
+  if (endpoint->tagSend(local_rkey.data(), local_rkey.size(), ch, /*seq=*/2) != status_t::SUCCESS) {
+    logError("UCXClient::connect: tagSend(local_rkey) failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  std::vector<std::uint8_t> remote_rkey(remote_hdr.rkey_len);
+  got = 0;
+  if (endpoint->tagRecv(remote_rkey.data(), remote_rkey.size(), &got, ch, /*seq=*/2) != status_t::SUCCESS) {
+    logError("UCXClient::connect: tagRecv(remote_rkey) failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+  if (got != remote_rkey.size()) {
+    logError("UCXClient::connect: remote_rkey size mismatch got=%zu expect=%zu",
+             got, remote_rkey.size());
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  if (endpoint->setRemoteMemInfo(remote_hdr, remote_rkey) != status_t::SUCCESS) {
+    logError("UCXClient::connect: setRemoteMemInfo failed");
+    endpoint->closeEndpoint();
+    return nullptr;
+  }
+
+  logInfo("UCXClient connected to %s:%u: remote_base=0x%llx remote_size=%llu rkey_len=%u (channel=%u)",
+          ip.c_str(), port,
+          (unsigned long long)remote_hdr.base_addr,
+          (unsigned long long)remote_hdr.size,
+          remote_hdr.rkey_len,
+          (unsigned)ch);
+
   return endpoint;
 }
 

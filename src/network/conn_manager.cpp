@@ -17,7 +17,7 @@ createServer(ConnType serverType, std::shared_ptr<ConnBuffer> buffer,
   case ConnType::RDMA:
     return std::make_unique<RDMAServer>(buffer, conn_manager, num_chs);
   case ConnType::UCX:
-    return std::make_unique<UCXServer>(conn_manager); // TODO:
+    return std::make_unique<UCXServer>(conn_manager, buffer);
   default:
     throw std::invalid_argument("Unknown server type");
   }
