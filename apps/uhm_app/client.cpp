@@ -213,13 +213,37 @@ void send_channel_slice_rdma_cpu(Context ctx) {
   send_control_message("Finished");
 }
 
+// UCX 模式：使用 CPU buffer 通过 UCX 发送（底层走 IB RC）
+void send_channel_slice_ucx(Context ctx) {
+  total_time = 0;
+
+  auto start  = steady_clock_t::now();
+  auto status = gpu_comm->sendDataTo(
+      server_ip,
+      ctx.cpu_data_ptr,   // ✅ 用 CPU 数据，不直接给 UCX GPU 指针
+      ctx.size,
+      MemoryType::CPU,    // 告诉上层我们用的是 CPU 内存
+      ConnType::UCX       // 走 UCX 通道（底层 IB）
+  );
+  auto end    = steady_clock_t::now();
+
+  total_time = std::chrono::duration_cast<std::chrono::microseconds>(end - start)
+                   .count();
+
+  if (status != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[UCX] Send failed.";
+  }
+}
+
+
 // -------------------- 主程序 --------------------
 std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
       if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu")
+          mode == "rdma_cpu" || mode == "ucx")
         return mode;
       cerr << "Invalid mode: " << mode << "\n";
       exit(1);
@@ -247,20 +271,35 @@ int main(int argc, char *argv[]) {
   gpu_comm = new Communicator(gpu_buffer, num_channels);
   cpu_comm = new Communicator(cpu_buffer, num_channels);
 
-  gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
-  cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);
+
+  // 根据 mode 选择 GPU 通道的 ConnType（UCX / RDMA）
+  ConnType gpu_conn_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
+  ConnType cpu_conn_type = ConnType::RDMA;
+
+  // UCX 模式下，client 也起一个 UCX server（让 server 能连过来）
+  if (mode == "ucx") {
+    if (gpu_comm->initServer(client_ip, gpu_port, ConnType::UCX) != status_t::SUCCESS) {
+      LOG(ERROR) << "[Client] UCX initServer(client_ip) failed.";
+      return -1;
+    }
+  }
+
+  gpu_comm->connectTo(server_ip, gpu_port, gpu_conn_type);
+  cpu_comm->connectTo(server_ip, cpu_port, cpu_conn_type);
 
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
-  int retry_count = 0;
-  while (!connect_control_server(tcp_server_ip, ctrl_port)) {
-    if (retry_count > 5) {
-      std::cerr << "Failed to connect control server :" << tcp_server_ip
-                << std::endl;
-      return -1;
+  if(mode != "ucx") {
+    int retry_count = 0;
+    while (!connect_control_server(tcp_server_ip, ctrl_port)) {
+      if (retry_count > 5) {
+        std::cerr << "Failed to connect control server :" << tcp_server_ip
+                  << std::endl;
+        return -1;
+      }
+      retry_count++;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
-    retry_count++;
-    std::this_thread::sleep_for(std::chrono::seconds(1));
   }
 
   void (*send_func)(Context) = nullptr;
@@ -270,6 +309,8 @@ int main(int argc, char *argv[]) {
     send_func = send_channel_slice_g2h2g;
   else if (mode == "rdma_cpu")
     send_func = send_channel_slice_rdma_cpu;
+  else if (mode == "ucx")
+    send_func = send_channel_slice_ucx;
   else
     send_func = send_channel_slice_uhm;
 
@@ -300,7 +341,7 @@ int main(int argc, char *argv[]) {
     double MBps = (total_size / time_s) / (1024.0 * 1024.0);
 
     LOG(INFO) << "[Mode: " << mode << "] "
-              << (mode == "uhm" || mode == "rdma_cpu" ? "[Network only]"
+              << (mode == "uhm" || mode == "rdma_cpu" || mode == "ucx" ? "[Network only]"
                                                       : "[End-to-end]")
               << " Data Size: " << total_size << " B, "
               << "Time: " << total_time << " us, " << MBps << " MiB/s, " << gbps
@@ -318,8 +359,8 @@ int main(int argc, char *argv[]) {
     std::this_thread::sleep_for(std::chrono::seconds(2));
   }
 
-  gpu_comm->disConnect(server_ip, ConnType::RDMA);
-  cpu_comm->disConnect(server_ip, ConnType::RDMA);
+  gpu_comm->disConnect(server_ip, gpu_conn_type);
+  cpu_comm->disConnect(server_ip, cpu_conn_type);
   close_control_connection();
   delete gpu_comm;
   delete cpu_comm;

@@ -166,7 +166,7 @@ std::string get_mode_from_args(int argc, char *argv[]) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
       if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu")
+          mode == "rdma_cpu" || mode == "ucx")
         return mode;
       cerr << "Invalid mode: " << mode << endl;
       exit(1);
@@ -174,6 +174,30 @@ std::string get_mode_from_args(int argc, char *argv[]) {
   }
   return "uhm";
 }
+
+
+// UCX 模式：先收进 CPU buffer，再拷到 GPU
+void recv_channel_slice_ucx(Context ctx) {
+  size_t flags = 0;
+
+  // 1. 用 UCX / IB 把数据收进 CPU buffer
+  if (gpu_comm->recvDataFrom(
+          client_ip,
+          ctx.cpu_data_ptr,      // ✅ 收到 CPU 内存
+          ctx.size,
+          MemoryType::CPU,       // 标记为 CPU 内存
+          &flags,
+          ConnType::UCX) != status_t::SUCCESS) {
+
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[UCX] Receive failed.";
+    return;
+  }
+
+  // 2. 拷到 GPU，这样后面的校验逻辑仍然统一走 GPU -> Host
+  gpu_mem_op->copyHostToDevice(ctx.gpu_data_ptr, ctx.cpu_data_ptr, ctx.size);
+}
+
 
 // ---------- 主程序 ----------
 int main(int argc, char *argv[]) {
@@ -196,16 +220,43 @@ int main(int argc, char *argv[]) {
   gpu_comm = new Communicator(gpu_buffer, num_channels);
   cpu_comm = new Communicator(cpu_buffer, num_channels);
 
-  if (gpu_comm->initServer(server_ip, gpu_port, ConnType::RDMA) !=
+  // 根据 mode 选择 GPU 通道的后端类型（RDMA 或 UCX），CPU 仍然用 RDMA
+  ConnType gpu_server_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
+  ConnType cpu_server_type = ConnType::RDMA;
+
+  if (gpu_comm->initServer(server_ip, gpu_port, gpu_server_type) !=
           status_t::SUCCESS ||
-      cpu_comm->initServer(server_ip, cpu_port, ConnType::RDMA) !=
+      cpu_comm->initServer(server_ip, cpu_port, cpu_server_type) !=
           status_t::SUCCESS) {
     LOG(ERROR) << "Failed to init RDMA servers.";
     return -1;
   }
 
-  // 建立 TCP 控制连接
-  ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
+  if (mode != "ucx") {
+    ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
+  } else {
+    ctrl_socket_fd = -1;
+  }
+
+    // ---------- 在 UCX 模式下，服务端也主动对 client 建立 UCX 连接 ----------
+  if (mode == "ucx") {
+    int retry = 0;
+    while (retry < 10) {
+      auto st = gpu_comm->connectTo(client_ip, gpu_port, ConnType::UCX);
+      if (st == status_t::SUCCESS) {
+        LOG(INFO) << "[Server] UCX connectTo(" << client_ip << ") success.";
+        break;
+      }
+      LOG(WARNING) << "[Server] UCX connectTo(" << client_ip
+                   << ") failed, retry " << retry;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      ++retry;
+    }
+    if (retry == 10) {
+      LOG(ERROR) << "[Server] UCX connectTo(client_ip) failed after retries.";
+      return -1;
+    }
+  }
 
   // 模式函数选择
   void (*recv_func)(Context) = nullptr;
@@ -215,6 +266,8 @@ int main(int argc, char *argv[]) {
     recv_func = recv_channel_slice_g2h2g;
   else if (mode == "rdma_cpu")
     recv_func = recv_channel_slice_rdma_cpu;
+  else if (mode == "ucx")
+    recv_func = recv_channel_slice_ucx;
   else
     recv_func = recv_channel_slice_uhm;
 
