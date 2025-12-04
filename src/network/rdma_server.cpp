@@ -98,13 +98,13 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
 
       ep->transitionExtraQPsToRTS(); // make all qp RTS
 
-      conn_manager->_addEndpoint(recv_ip, std::move(ep));
+      conn_manager->_addEndpoint(recv_ip, std::move(ep), ConnType::RDMA);
       logInfo("Server:: connection established with %s:%d", recv_ip, recv_port);
 
     } else if (event_copy.event == RDMA_CM_EVENT_DISCONNECTED) {
       logInfo("Recv Disconnect msg from %s:%d", recv_ip, recv_port);
       rdma_disconnect(event_copy.id);
-      conn_manager->_removeEndpoint(recv_ip);
+      conn_manager->_removeEndpoint(recv_ip, ConnType::RDMA);
       logInfo("Disconnect success for %s", recv_ip);
     }
   }

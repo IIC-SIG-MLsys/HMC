@@ -28,16 +28,13 @@ std::string tcp_server_ip;
 
 const size_t buffer_size = 1024ULL * 1024 * 128;
 const int device_id = 0;
-const int gpu_port = 2025;
-const int cpu_port = 2026;
+const int g_port = 2025;
 const int ctrl_port = 2027;
 
 int ctrl_socket_fd = -1;
 
-std::shared_ptr<ConnBuffer> gpu_buffer;
-std::shared_ptr<ConnBuffer> cpu_buffer;
-Communicator *gpu_comm;
-Communicator *cpu_comm;
+std::shared_ptr<ConnBuffer> buffer;
+Communicator *comm = nullptr;
 
 Memory *gpu_mem_op = new Memory(device_id);
 Memory *cpu_mem_op = new Memory(0, MemoryType::CPU);
@@ -49,8 +46,7 @@ struct Context {
   std::mutex *log_mutex;
 };
 
-std::string get_env_or_default(const char *var_name,
-                               const std::string &default_val) {
+std::string get_env_or_default(const char *var_name, const std::string &default_val) {
   const char *val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
@@ -106,43 +102,53 @@ void close_control_socket(int &sock) {
 }
 
 bool wait_for_control_message(int socket_fd) {
-  char buffer[16] = {0};
-  int valread = read(socket_fd, buffer, sizeof(buffer));
+  char buffer_local[16] = {0};
+  int valread = read(socket_fd, buffer_local, sizeof(buffer_local));
   if (valread <= 0) return false;
-  return std::string(buffer).find("Finished") != std::string::npos;
+  return std::string(buffer_local).find("Finished") != std::string::npos;
 }
 
 void recv_channel_slice_uhm(Context ctx) {
   size_t flags = 0;
-  if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size,
-                             MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
+  if (comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UHM] Receive failed.";
   }
+  wait_for_control_message(ctrl_socket_fd);
 }
 
 void recv_channel_slice_serial(Context ctx) {
   const size_t chunk_size = buffer_size / 2;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
 
+  uint64_t tag;
   for (size_t i = 0; i < num_chunks; ++i) {
-    if (!wait_for_control_message(ctrl_socket_fd)) {
-      LOG(ERROR) << "Serial mode: control message timeout.";
+    auto r = comm->ctrlRecv(client_ip, &tag);
+    if (r != status_t::SUCCESS || tag != 1) {
+      LOG(ERROR) << "Serial mode: control message timeout, tag is " << tag;
       return;
     }
   }
+  wait_for_control_message(ctrl_socket_fd);
 }
 
 void recv_channel_slice_g2h2g(Context ctx) {
   const size_t chunk_size = buffer_size / 2;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
 
+  uint64_t tag;
   for (size_t i = 0; i < num_chunks; ++i) {
-    if (!wait_for_control_message(ctrl_socket_fd)) {
-      LOG(ERROR) << "G2H2G mode: control message timeout.";
+    auto r = comm->ctrlRecv(client_ip, &tag);
+    if (r != status_t::SUCCESS) {
+      LOG(ERROR) << "G2H2G mode: control message timeout";
+      return;
+    }
+    if (tag != 1) {
+      LOG(ERROR) << "G2H2G mode: control tag error is " << tag;
       return;
     }
   }
+  wait_for_control_message(ctrl_socket_fd);
 }
 
 void recv_channel_slice_rdma_cpu(Context ctx) {
@@ -156,7 +162,7 @@ void recv_channel_slice_ucx(Context ctx) {
     return;
   }
 
-  if (cpu_buffer->readToCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+  if (buffer->readToCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UCX] readToCpu failed.";
     return;
@@ -169,9 +175,7 @@ std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
-      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu" || mode == "ucx")
-        return mode;
+      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" || mode == "rdma_cpu" || mode == "ucx") return mode;
       cerr << "Invalid mode: " << mode << endl;
       exit(1);
     }
@@ -192,39 +196,41 @@ int main(int argc, char *argv[]) {
 
   std::mutex log_mutex;
 
-  gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
-  cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
+  const bool use_cpu_buffer = (mode == "g2h2g" || mode == "ucx");
+
+  if (use_cpu_buffer) {
+    buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
+  } else {
+    buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
+  }
 
   int num_channels = 1;
-  gpu_comm = new Communicator(gpu_buffer, num_channels);
-  cpu_comm = new Communicator(cpu_buffer, num_channels);
+  comm = new Communicator(buffer, num_channels);
+
+  ConnType conn_type = ConnType::RDMA;
+  int port = g_port;
 
   if (mode == "ucx") {
-    if (cpu_comm->initServer(server_ip, gpu_port, ConnType::UCX) != status_t::SUCCESS) {
-      LOG(ERROR) << "Failed to init UCX server.";
-      return -1;
-    }
+    conn_type = ConnType::UCX;
+  } else if (use_cpu_buffer) {
+    conn_type = ConnType::RDMA;
   } else {
-    if (gpu_comm->initServer(server_ip, gpu_port, ConnType::RDMA) != status_t::SUCCESS ||
-        cpu_comm->initServer(server_ip, cpu_port, ConnType::RDMA) != status_t::SUCCESS) {
-      LOG(ERROR) << "Failed to init RDMA servers.";
-      return -1;
-    }
+    conn_type = ConnType::RDMA;
+  }
+
+  if (comm->initServer(server_ip, port, conn_type) != status_t::SUCCESS) {
+    LOG(ERROR) << "Failed to init server.";
+    return -1;
   }
 
   ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
 
   void (*recv_func)(Context) = nullptr;
-  if (mode == "serial")
-    recv_func = recv_channel_slice_serial;
-  else if (mode == "g2h2g")
-    recv_func = recv_channel_slice_g2h2g;
-  else if (mode == "rdma_cpu")
-    recv_func = recv_channel_slice_rdma_cpu;
-  else if (mode == "ucx")
-    recv_func = recv_channel_slice_ucx;
-  else
-    recv_func = recv_channel_slice_uhm;
+  if (mode == "serial") recv_func = recv_channel_slice_serial;
+  else if (mode == "g2h2g") recv_func = recv_channel_slice_g2h2g;
+  else if (mode == "rdma_cpu") recv_func = recv_channel_slice_rdma_cpu;
+  else if (mode == "ucx") recv_func = recv_channel_slice_ucx;
+  else recv_func = recv_channel_slice_uhm;
 
   for (int power = 5; power <= 26; ++power) {
     size_t total_size = size_t(1) << power;
@@ -243,13 +249,20 @@ int main(int argc, char *argv[]) {
       continue;
     }
 
-    if (mode != "g2h2g") {
+    if (mode == "g2h2g") {
+      if (buffer->readToCpu(host_data.data(), total_size, 0) != status_t::SUCCESS) {
+        LOG(ERROR) << "[G2H2G] readToCpu failed.";
+      }
+    } else {
       gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
     }
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
-      if (host_data[i] != 'A') { valid = false; break; }
+      if (host_data[i] != 'A') {
+        valid = false;
+        break;
+      }
     }
 
     LOG(INFO) << "[Size " << total_size << " B] Data Integrity: " << (valid ? "PASS" : "FAIL");
@@ -259,11 +272,10 @@ int main(int argc, char *argv[]) {
     LOG(INFO) << "--------------------------------------------";
   }
 
-  gpu_comm->closeServer();
-  cpu_comm->closeServer();
+  comm->closeServer();
   close_control_socket(ctrl_socket_fd);
-  delete gpu_comm;
-  delete cpu_comm;
+  delete comm;
+  comm = nullptr;
 
   std::cout << "Server shutdown complete." << std::endl;
   return 0;

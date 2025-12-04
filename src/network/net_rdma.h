@@ -96,16 +96,12 @@ public:
   status_t transitionExtraQPsToRTS();
 
   /* Data Transfer */
-  status_t writeData(size_t data_bias, size_t size) override;
-  status_t readData(size_t data_bias, size_t size) override;
+  status_t writeData(size_t local_off, size_t remote_off, size_t size) override;
+  status_t readData(size_t local_off, size_t remote_off, size_t size) override;
 
-  status_t writeDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
-  status_t writeDataNB_2(size_t data_bias, size_t size, uint64_t *wr_id);
-  status_t writeDataNBMulti(size_t data_bias, size_t size,
-                                   std::vector<uint64_t> *wr_ids);
-  status_t readDataNB(size_t data_bias, size_t size, uint64_t *wr_id) override;
-  status_t readDataNBMulti(size_t data_bias, size_t size,
-                                  std::vector<uint64_t> *wr_ids);
+  status_t writeDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wr_id) override;
+  status_t readDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wr_id) override;
+
   status_t waitWrId(uint64_t wr_id) override;
   status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
                                      std::chrono::milliseconds timeout = std::chrono::seconds(5));

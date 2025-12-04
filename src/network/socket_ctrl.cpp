@@ -204,6 +204,21 @@ bool CtrlSocketManager::recvCtrlInt(const std::string &ip, int &value) {
   return true;
 }
 
+bool CtrlSocketManager::sendCtrlU64(const std::string& ip, uint64_t v) {
+  return sendCtrlMsg(ip, CTRL_INT, &v, sizeof(v));
+}
+
+bool CtrlSocketManager::recvCtrlU64(const std::string& ip, uint64_t &v) {
+  CtrlMsgHeader hdr;
+  std::vector<uint8_t> payload;
+  if (!recvCtrlMsg(ip, hdr, payload))
+    return false;
+  if (hdr.type != CTRL_INT || payload.size() != sizeof(uint64_t))
+    return false;
+  std::memcpy(&v, payload.data(), sizeof(uint64_t));
+  return true;
+}
+
 // ================= Cleanup =================
 
 void CtrlSocketManager::closeConnection(const std::string &ip) {

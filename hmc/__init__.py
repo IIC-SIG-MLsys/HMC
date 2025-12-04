@@ -160,13 +160,10 @@ def _as_cpu_contiguous_bytes_view(x: Any) -> memoryview:
             raise ValueError("Got a CUDA torch.Tensor in CPU path; use device='cuda' or pass a CUDA tensor.")
         if not x.is_contiguous():
             x = x.contiguous()
-
-        # Zero-copy CPU tensor -> numpy view, then memoryview
         np = _try_import_numpy()
         if np is None:
             mv = memoryview(x.cpu().numpy().tobytes())
             return mv.cast("B") if mv.format != "B" else mv
-
         mv = memoryview(x.numpy())
         return mv.cast("B") if mv.format != "B" else mv
 
@@ -225,7 +222,6 @@ class IOBuffer:
             if not dst.flags["WRITEABLE"]:
                 raise ValueError("Destination numpy array must be writeable")
             mv = memoryview(dst).cast("B")
-
         elif _is_torch_tensor(dst):
             if dst.is_cuda:
                 raise ValueError("Destination is CUDA tensor; use device='cuda' or pass CUDA tensor.")
@@ -243,7 +239,6 @@ class IOBuffer:
                 )
                 return
             mv = memoryview(dst.numpy()).cast("B")
-
         else:
             mv = _to_memoryview(dst).cast("B")
             if mv.readonly:
@@ -278,6 +273,10 @@ class IOBuffer:
         ptr, n = _torch_cuda_ptr_and_nbytes(t, nbytes)
         self.buffer_get_gpu_ptr(ptr, nbytes=n, offset=offset)
         return n
+
+    def buffer_copy_within(self, *, dst_offset: int, src_offset: int, nbytes: int) -> None:
+        st = self.core.copyWithin(int(dst_offset), int(src_offset), int(nbytes))
+        _ensure_ok(st, "ConnBuffer.copyWithin failed")
 
     def put(
         self,
@@ -318,7 +317,7 @@ class IOBuffer:
             self.buffer_get_cuda(dst, nbytes=nbytes, offset=offset)
             return
 
-        self.buffer_get_cpu_into(dst, nbytes=int(nbytes), offset=offset)
+        self.buffer_get_cpu_into(dst, nbytes=int(nbytes), offset=int(offset))
 
 
 class Session:
@@ -338,55 +337,110 @@ class Session:
     def disconnect(self, ip: str, conn: ConnType = ConnType.RDMA) -> None:
         _ensure_ok(self.comm.disConnect(ip, _to_core_conn_type(conn)), "Communicator.disConnect failed")
 
-    def write_to(self, ip: str, ptr_bias: int, size: int, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.writeTo(ip, int(ptr_bias), int(size), _to_core_conn_type(conn)), "Communicator.writeTo failed")
+    def check_conn(self, ip: str, conn: ConnType = ConnType.RDMA) -> None:
+        _ensure_ok(self.comm.checkConn(ip, _to_core_conn_type(conn)), "Communicator.checkConn failed")
 
-    def read_from(self, ip: str, ptr_bias: int, size: int, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.readFrom(ip, int(ptr_bias), int(size), _to_core_conn_type(conn)), "Communicator.readFrom failed")
+    def put_remote(self, ip: str, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> None:
+        _ensure_ok(
+            self.comm.put(ip, int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
+            "Communicator.put failed",
+        )
 
-    def put(
+    def get_remote(self, ip: str, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> None:
+        _ensure_ok(
+            self.comm.get(ip, int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
+            "Communicator.get failed",
+        )
+
+    def put_nb(
+        self,
+        ip: str,
+        local_off: int,
+        remote_off: int,
+        nbytes: int,
+        conn: ConnType = ConnType.RDMA,
+    ) -> int:
+        wr_id_box = [0]
+        st = self.comm.putNB(ip, int(local_off), int(remote_off), int(nbytes), wr_id_box, _to_core_conn_type(conn))
+        _ensure_ok(st, "Communicator.putNB failed")
+        return int(wr_id_box[0])
+
+    def get_nb(
+        self,
+        ip: str,
+        local_off: int,
+        remote_off: int,
+        nbytes: int,
+        conn: ConnType = ConnType.RDMA,
+    ) -> int:
+        wr_id_box = [0]
+        st = self.comm.getNB(ip, int(local_off), int(remote_off), int(nbytes), wr_id_box, _to_core_conn_type(conn))
+        _ensure_ok(st, "Communicator.getNB failed")
+        return int(wr_id_box[0])
+
+    def wait(self, wr_id: int | list[int]) -> None:
+        if isinstance(wr_id, list):
+            _ensure_ok(self.comm.wait([int(x) for x in wr_id]), "Communicator.wait(wr_ids) failed")
+        else:
+            _ensure_ok(self.comm.wait(int(wr_id)), "Communicator.wait(wr_id) failed")
+
+    def ctrl_send(self, ip: str, tag: int) -> None:
+        _ensure_ok(self.comm.ctrlSend(ip, int(tag)), "Communicator.ctrlSend failed")
+
+    def ctrl_recv(self, ip: str) -> int:
+        st, tag = self.comm.ctrlRecv(ip)
+        _ensure_ok(st, "Communicator.ctrlRecv failed")
+        return int(tag)
+
+    def buffer_put_then_put(
         self,
         ip: str,
         data: Any,
         *,
-        bias: int = 0,
-        conn: ConnType = ConnType.UCX,
-        size: Optional[int] = None,
+        local_off: int = 0,
+        remote_off: int = 0,
+        conn: ConnType = ConnType.RDMA,
+        nbytes: Optional[int] = None,
         device: DeviceHint = None,
-    ) -> None:
-        n = self.buf.put(data, nbytes=size, offset=bias, device=device)
-        self.write_to(ip, bias, n, conn)
+    ) -> int:
+        n = self.buf.put(data, nbytes=nbytes, offset=local_off, device=device)
+        self.put_remote(ip, local_off=local_off, remote_off=remote_off, nbytes=n, conn=conn)
+        return n
 
-    def get_into(
+    def get_then_buffer_get_into(
         self,
         ip: str,
-        dest: Any,
+        dst: Any,
         *,
-        bias: int = 0,
-        conn: ConnType = ConnType.UCX,
-        size: Optional[int] = None,
+        local_off: int = 0,
+        remote_off: int = 0,
+        nbytes: Optional[int] = None,
+        conn: ConnType = ConnType.RDMA,
         device: DeviceHint = None,
-    ) -> None:
-        if size is None:
-            if _is_numpy_array(dest):
-                size = int(dest.nbytes)
-            elif _is_torch_tensor(dest):
-                size = int(_torch_tensor_info(dest)["nbytes"])
+    ) -> int:
+        if nbytes is None:
+            if _is_numpy_array(dst):
+                nbytes = int(dst.nbytes)
+            elif _is_torch_tensor(dst):
+                nbytes = int(_torch_tensor_info(dst)["nbytes"])
             else:
-                size = len(_to_memoryview(dest).cast("B"))
-        self.read_from(ip, bias, int(size), conn)
-        self.buf.get_into(dest, nbytes=int(size), offset=bias, device=device)
+                nbytes = len(_to_memoryview(dst).cast("B"))
 
-    def get(
-        self,
-        ip: str,
-        size: int,
-        *,
-        bias: int = 0,
-        conn: ConnType = ConnType.UCX,
-    ) -> bytes:
-        self.read_from(ip, bias, int(size), conn)
-        return bytes(self.buf.buffer_get_cpu(nbytes=int(size), offset=bias))
+        self.get_remote(ip, local_off=local_off, remote_off=remote_off, nbytes=int(nbytes), conn=conn)
+        self.buf.get_into(dst, nbytes=int(nbytes), offset=local_off, device=device)
+        return int(nbytes)
+
+    def send_data_to(self, ip: str, send_buf_ptr: int, buf_size: int, buf_type: MemoryType, conn: ConnType = ConnType.RDMA) -> None:
+        _ensure_ok(
+            self.comm.sendDataTo(ip, int(send_buf_ptr), int(buf_size), _to_core_memory_type(buf_type), _to_core_conn_type(conn)),
+            "Communicator.sendDataTo failed",
+        )
+
+    def recv_data_from(self, ip: str, recv_buf_ptr: int, buf_size: int, buf_type: MemoryType, flag_ptr: int, conn: ConnType = ConnType.RDMA) -> None:
+        _ensure_ok(
+            self.comm.recvDataFrom(ip, int(recv_buf_ptr), int(buf_size), _to_core_memory_type(buf_type), int(flag_ptr), _to_core_conn_type(conn)),
+            "Communicator.recvDataFrom failed",
+        )
 
 
 def create_session(
@@ -414,4 +468,11 @@ __all__ = [
     "IOBuffer",
     "Session",
     "create_session",
+]
+
+from .collective import Group, init_group
+
+__all__ += [
+    "Group",
+    "init_group",
 ]

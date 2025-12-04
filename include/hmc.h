@@ -82,6 +82,7 @@ public:
   status_t readToCpu(void *dest, size_t size, size_t bias = 0);
   status_t writeFromGpu(void *src, size_t size, size_t bias = 0);
   status_t readToGpu(void *src, size_t size, size_t bias = 0);
+  status_t copyWithin(size_t dst_bias, size_t src_bias, size_t size);
 
   ~ConnBuffer();
 };
@@ -149,6 +150,8 @@ public:
 
   bool sendCtrlInt(const std::string &ip, int value);
   bool recvCtrlInt(const std::string &ip, int &value);
+  bool sendCtrlU64(const std::string &ip, uint64_t v);
+  bool recvCtrlU64(const std::string &ip, uint64_t &v);
 
   template <typename T>
   bool sendCtrlStruct(const std::string &ip, const T &obj);
@@ -215,21 +218,35 @@ private:
   std::shared_ptr<ConnBuffer> buffer;        ///< Registered memory buffer
   std::shared_ptr<ConnManager> conn_manager; ///< Underlying connection manager
 
+  std::mutex inflight_mu_;
+  std::unordered_map<uint64_t, Endpoint*> inflight_ep_;
+
 public:
   explicit Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs = 1);
 
   // --- Core Operations ---
   // single side write/read
-  status_t writeTo(std::string ip, size_t ptr_bias, size_t size,
-                   ConnType connType = ConnType::RDMA);
-  status_t readFrom(std::string ip, size_t ptr_bias, size_t size,
-                    ConnType connType = ConnType::RDMA);
+  status_t put(std::string ip,
+             size_t local_off,
+             size_t remote_off,
+             size_t size,
+             ConnType connType = ConnType::RDMA);
 
-  // double side send/recv by write
-  status_t send(std::string ip, size_t ptr_bias, size_t size,
-                ConnType connType = ConnType::RDMA);
-  status_t recv(std::string ip, size_t ptr_bias, size_t size,
-                ConnType connType = ConnType::RDMA); ///< Blocking receive
+  status_t get(std::string ip,
+             size_t local_off,
+             size_t remote_off,
+             size_t size,
+             ConnType connType = ConnType::RDMA);
+
+  status_t putNB(std::string ip, size_t local_off, size_t remote_off, size_t size,
+               uint64_t *wr_id, ConnType connType = ConnType::RDMA);
+  status_t getNB(std::string ip, size_t local_off, size_t remote_off, size_t size,
+                uint64_t *wr_id, ConnType connType = ConnType::RDMA);
+  status_t wait(uint64_t wr_id);
+  status_t wait(const std::vector<uint64_t>& wr_ids);
+
+  status_t ctrlSend(std::string ip, uint64_t tag);
+  status_t ctrlRecv(std::string ip, uint64_t *tag);
 
   // --- High-level Data APIs (UHM interface, only RDMA) ---
   status_t sendDataTo(std::string ip, void *send_buf, size_t buf_size,

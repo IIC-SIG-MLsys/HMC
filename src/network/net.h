@@ -24,15 +24,17 @@ public:
   Endpoint() = default;
   virtual ~Endpoint() = default;
 
-  virtual status_t writeData(size_t data_bias, size_t size) = 0;
-  virtual status_t readData(size_t data_bias, size_t size) = 0;
+  virtual status_t writeData(size_t local_off, size_t remote_off, size_t size) = 0;
+  virtual status_t readData(size_t local_off, size_t remote_off, size_t size) = 0;
 
   // no block interface
-  virtual status_t writeDataNB(size_t data_bias, size_t size,
+  virtual status_t writeDataNB(size_t local_off, size_t remote_off, size_t size,
                                uint64_t *wr_id) = 0;
-  virtual status_t readDataNB(size_t data_bias, size_t size,
+  virtual status_t readDataNB(size_t local_off, size_t remote_off, size_t size,
                               uint64_t *wr_id) = 0;
   virtual status_t waitWrId(uint64_t wr_id) = 0;
+  virtual status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
+                                     std::chrono::milliseconds timeout) = 0;
 
   // uhm interface, only for RDMAEndpoint
   virtual status_t uhm_send(void *input_buffer, const size_t send_flags,
@@ -106,35 +108,53 @@ public:
   // }
 
   // 安全访问接口
-  template <typename F> status_t withEndpoint(const std::string &ip, F &&func) {
+  template <typename F> status_t withEndpoint(const std::string &ip, ConnType type, F &&func) {
     // 第一阶段：查找条目
     EndpointEntry *entry = nullptr;
-    {
-      std::lock_guard<std::mutex> lock(endpoint_map_mutex);
-      auto it = endpoint_map.find(ip);
-      if (it == endpoint_map.end()) {
-        return status_t::NOT_FOUND; // entry未找到
+    switch (type) {
+    case ConnType::RDMA: {
+      std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
+      auto it = rdma_endpoint_map.find(ip);
+      if (it == rdma_endpoint_map.end()) {
+        return status_t::NOT_FOUND;
       }
       entry = &it->second;
+      break;
+    }
+    case ConnType::UCX: {
+      std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
+      auto it = ucx_endpoint_map.find(ip);
+      if (it == ucx_endpoint_map.end()) {
+        return status_t::NOT_FOUND;
+      }
+      entry = &it->second;
+      break;
+    }
+    default:
+      return status_t::INVALID_CONFIG;
     }
 
     // 第二阶段：锁定并执行操作
-    std::lock_guard<std::mutex> entry_lock(entry->mutex); // ep的使用必须排他性
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
     if (!entry->endpoint) {
-      return status_t::ERROR; // endpoint未找到
+      return status_t::ERROR;
     }
 
-    return func(entry->endpoint.get()); // 传递返回值
+    return func(entry->endpoint.get());
   }
 
-  void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint);
-  void _removeEndpoint(std::string ip);
+  void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint, ConnType type);
+  void _removeEndpoint(std::string ip, ConnType type);
 
   void _printEndpointMap() {
-    logInfo("Number of key-value pairs: %lu", endpoint_map.size());
-    std::cout << "Keys in the unordered_map:" << std::endl;
-    for (const auto &pair : endpoint_map) {
-      std::cout << pair.first << std::endl; // 输出键
+    logInfo("Number of key-value pairs: %lu", rdma_endpoint_map.size()+ucx_endpoint_map.size());
+    std::cout << "Keys in the rdma_endpoint_map:" << std::endl;
+    for (const auto &pair : rdma_endpoint_map) {
+      std::cout << pair.first << std::endl;
+    }
+    std::cout << "Keys in the ucx_endpoint_map:" << std::endl;
+    for (const auto &pair : ucx_endpoint_map) {
+      std::cout << pair.first << std::endl;
     }
   }
 
@@ -142,9 +162,11 @@ public:
 
 private:
   size_t num_chs_ = 1;
-  std::unordered_map<std::string, EndpointEntry> endpoint_map;
+  std::unordered_map<std::string, EndpointEntry> rdma_endpoint_map;
+  std::unordered_map<std::string, EndpointEntry> ucx_endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
-  std::mutex endpoint_map_mutex; // 用于保护对 endpoint_map 的访问
+  std::mutex rdma_endpoint_map_mutex;
+  std::mutex ucx_endpoint_map_mutex;
 
   std::mutex server_mu_;
   std::unordered_map<ConnType, std::unique_ptr<Server>, ConnTypeHash> servers_;

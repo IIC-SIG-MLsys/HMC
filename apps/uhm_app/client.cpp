@@ -20,9 +20,9 @@
 using namespace hmc;
 using namespace std;
 
-const std::string DEFAULT_SERVER_IP = "192.168.2.236";
-const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-const std::string DEFAULT_TCP_IP = "10.102.0.241";
+const std::string DEFAULT_SERVER_IP = "192.168.2.244";
+const std::string DEFAULT_CLIENT_IP = "192.168.2.244";
+const std::string DEFAULT_TCP_IP = "192.168.2.244";
 
 std::string server_ip;
 std::string client_ip;
@@ -30,16 +30,13 @@ std::string tcp_server_ip;
 
 size_t buffer_size = 1024ULL * 1024 * 128;
 const int device_id = 0;
-const int gpu_port = 2025;
-const int cpu_port = 2026;
+const int g_port = 2025;
 const int ctrl_port = 2027;
 
 int ctrl_sock = -1;
 
-Communicator *gpu_comm;
-Communicator *cpu_comm;
-std::shared_ptr<ConnBuffer> gpu_buffer;
-std::shared_ptr<ConnBuffer> cpu_buffer;
+Communicator *comm = nullptr;
+std::shared_ptr<ConnBuffer> buffer;
 
 Memory *gpu_mem_op = new Memory(device_id);
 Memory *cpu_mem_op = new Memory(0, MemoryType::CPU);
@@ -56,8 +53,7 @@ std::mutex log_mutex;
 
 using steady_clock_t = std::chrono::steady_clock;
 
-std::string get_env_or_default(const char *var_name,
-                               const std::string &default_val) {
+std::string get_env_or_default(const char *var_name, const std::string &default_val) {
   const char *val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
@@ -115,16 +111,15 @@ void close_control_connection() {
 void send_channel_slice_uhm(Context ctx) {
   total_time = 0;
   auto start = steady_clock_t::now();
-  auto status = gpu_comm->sendDataTo(server_ip, ctx.gpu_data_ptr, ctx.size,
-                                     MemoryType::DEFAULT);
+  auto status = comm->sendDataTo(server_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT);
   auto end = steady_clock_t::now();
-  total_time =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  total_time = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UHM] Send failed.";
   }
+  send_control_message("Finished");
 }
 
 void send_channel_slice_serial(Context ctx) {
@@ -137,48 +132,43 @@ void send_channel_slice_serial(Context ctx) {
     size_t send_size = std::min(chunk_size, remaining);
     auto start = steady_clock_t::now();
 
-    gpu_buffer->writeFromGpu(static_cast<char *>(ctx.gpu_data_ptr) +
-                                 (ctx.size - remaining),
-                             send_size, 0);
-    gpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    buffer->writeFromGpu(static_cast<char *>(ctx.gpu_data_ptr) + (ctx.size - remaining), send_size, 0);
+    comm->put(server_ip, 0, 0, send_size, ConnType::RDMA);
 
     auto end = steady_clock_t::now();
     remaining -= send_size;
-    total_time +=
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-    send_control_message("Finished");
+    comm->ctrlSend(server_ip, 1);
   }
+  send_control_message("Finished");
 }
 
 void send_channel_slice_g2h2g(Context ctx) {
-  void *host_buffer;
-  cpu_mem_op->allocateBuffer(&host_buffer, ctx.size);
-
   const size_t chunk_size = buffer_size / 2;
   size_t remaining = ctx.size;
   size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
   total_time = 0;
 
+  size_t sent_offset = 0;
+
   for (size_t i = 0; i < num_chunks; ++i) {
     size_t send_size = std::min(chunk_size, remaining);
     auto start = steady_clock_t::now();
 
-    gpu_mem_op->copyDeviceToHost(cpu_buffer->ptr,
-                                 static_cast<char *>(ctx.gpu_data_ptr) +
-                                     (ctx.size - remaining),
-                                 send_size);
-    cpu_comm->writeTo(server_ip, 0, send_size, ConnType::RDMA);
+    gpu_mem_op->copyDeviceToHost(buffer->ptr, static_cast<char *>(ctx.gpu_data_ptr) + sent_offset, send_size);
+    comm->put(server_ip, 0, 0, send_size, ConnType::RDMA);
 
     auto end = steady_clock_t::now();
+    sent_offset += send_size;
     remaining -= send_size;
-    total_time +=
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
-    send_control_message("Finished");
+    auto r = comm->ctrlSend(server_ip, 1);
+    if (r != status_t::SUCCESS) std::cout << "send error " << server_ip << std::endl;
   }
 
-  cpu_mem_op->freeBuffer(host_buffer);
+  send_control_message("Finished");
 }
 
 void send_channel_slice_rdma_cpu(Context ctx) {
@@ -192,17 +182,15 @@ void send_channel_slice_rdma_cpu(Context ctx) {
   for (size_t i = 0; i < num_chunks; ++i) {
     size_t send_size = std::min(chunk_size, remaining);
 
-    gpu_buffer->writeFromGpu(static_cast<char *>(ctx.gpu_data_ptr) + sent_offset,
-                             send_size, 0);
+    buffer->writeFromGpu(static_cast<char *>(ctx.gpu_data_ptr) + sent_offset, send_size, 0);
 
     auto start = steady_clock_t::now();
-    gpu_comm->send(server_ip, 0, send_size, ConnType::RDMA);
+    comm->put(server_ip, 0, 0, send_size, ConnType::RDMA);
     auto end = steady_clock_t::now();
 
     sent_offset += send_size;
     remaining -= send_size;
-    total_time +=
-        std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    total_time += std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
   }
 
   send_control_message("Finished");
@@ -211,22 +199,21 @@ void send_channel_slice_rdma_cpu(Context ctx) {
 void send_channel_slice_ucx(Context ctx) {
   total_time = 0;
 
-  if (cpu_buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+  if (buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UCX] writeFromCpu failed.";
     return;
   }
 
   auto start = steady_clock_t::now();
-  auto status = cpu_comm->writeTo(server_ip, 0, ctx.size, ConnType::UCX);
+  auto status = comm->put(server_ip, 0, 0, ctx.size, ConnType::UCX);
   auto end = steady_clock_t::now();
 
-  total_time =
-      std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+  total_time = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
 
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] writeTo failed.";
+    LOG(ERROR) << "[UCX] put failed.";
     return;
   }
 
@@ -237,9 +224,7 @@ std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
-      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu" || mode == "ucx")
-        return mode;
+      if (mode == "uhm" || mode == "serial" || mode == "g2h2g" || mode == "rdma_cpu" || mode == "ucx") return mode;
       cerr << "Invalid mode: " << mode << "\n";
       exit(1);
     }
@@ -258,19 +243,29 @@ int main(int argc, char *argv[]) {
   client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
   tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
-  gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
-  cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
+  const bool use_cpu_buffer = (mode == "g2h2g" || mode == "ucx");
+
+  if (use_cpu_buffer) {
+    buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
+  } else {
+    buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
+  }
 
   int num_channels = 1;
-  gpu_comm = new Communicator(gpu_buffer, num_channels);
-  cpu_comm = new Communicator(cpu_buffer, num_channels);
+  comm = new Communicator(buffer, num_channels);
+
+  ConnType conn_type = ConnType::RDMA;
+  int port = g_port;
 
   if (mode == "ucx") {
-    cpu_comm->connectTo(server_ip, gpu_port, ConnType::UCX);
+    conn_type = ConnType::UCX;
+  } else if (use_cpu_buffer) {
+    conn_type = ConnType::RDMA;
   } else {
-    gpu_comm->connectTo(server_ip, gpu_port, ConnType::RDMA);
-    cpu_comm->connectTo(server_ip, cpu_port, ConnType::RDMA);
+    conn_type = ConnType::RDMA;
   }
+
+  comm->connectTo(server_ip, port, conn_type);
 
   std::this_thread::sleep_for(std::chrono::seconds(1));
 
@@ -285,20 +280,14 @@ int main(int argc, char *argv[]) {
   }
 
   void (*send_func)(Context) = nullptr;
-  if (mode == "serial")
-    send_func = send_channel_slice_serial;
-  else if (mode == "g2h2g")
-    send_func = send_channel_slice_g2h2g;
-  else if (mode == "rdma_cpu")
-    send_func = send_channel_slice_rdma_cpu;
-  else if (mode == "ucx")
-    send_func = send_channel_slice_ucx;
-  else
-    send_func = send_channel_slice_uhm;
+  if (mode == "serial") send_func = send_channel_slice_serial;
+  else if (mode == "g2h2g") send_func = send_channel_slice_g2h2g;
+  else if (mode == "rdma_cpu") send_func = send_channel_slice_rdma_cpu;
+  else if (mode == "ucx") send_func = send_channel_slice_ucx;
+  else send_func = send_channel_slice_uhm;
 
   ofstream csv_file("performanceTest_client.csv", ios::app);
-  if (csv_file.tellp() == 0)
-    csv_file << "Mode,Data Size (MB),Time(us),Bandwidth(Gbps)\n";
+  if (csv_file.tellp() == 0) csv_file << "Mode,Data Size (MB),Time(us),Bandwidth(Gbps)\n";
   csv_file.close();
 
   sleep(3);
@@ -311,10 +300,7 @@ int main(int argc, char *argv[]) {
     gpu_mem_op->allocateBuffer(&device_ptr, total_size);
     gpu_mem_op->copyHostToDevice(device_ptr, host_data.data(), total_size);
 
-    Context ctx = {.cpu_data_ptr = host_data.data(),
-                   .gpu_data_ptr = device_ptr,
-                   .size = total_size,
-                   .log_mutex = &log_mutex};
+    Context ctx = {.cpu_data_ptr = host_data.data(), .gpu_data_ptr = device_ptr, .size = total_size, .log_mutex = &log_mutex};
 
     send_func(ctx);
 
@@ -323,12 +309,9 @@ int main(int argc, char *argv[]) {
     double MBps = (total_size / time_s) / (1024.0 * 1024.0);
 
     LOG(INFO) << "[Mode: " << mode << "] "
-              << (mode == "uhm" || mode == "rdma_cpu" || mode == "ucx"
-                      ? "[Network only]"
-                      : "[End-to-end]")
+              << (mode == "uhm" || mode == "rdma_cpu" || mode == "ucx" ? "[Network only]" : "[End-to-end]")
               << " Data Size: " << total_size << " B, "
-              << "Time: " << total_time << " us, " << MBps << " MiB/s, " << gbps
-              << " Gbps";
+              << "Time: " << total_time << " us, " << MBps << " MiB/s, " << gbps << " Gbps";
 
     ofstream file("performanceTest_client.csv", ios::app);
     if (file.is_open()) {
@@ -341,16 +324,11 @@ int main(int argc, char *argv[]) {
     std::this_thread::sleep_for(std::chrono::seconds(2));
   }
 
-  if (mode == "ucx") {
-    cpu_comm->disConnect(server_ip, ConnType::UCX);
-  } else {
-    gpu_comm->disConnect(server_ip, ConnType::RDMA);
-    cpu_comm->disConnect(server_ip, ConnType::RDMA);
-  }
+  comm->disConnect(server_ip, conn_type);
 
   close_control_connection();
-  delete gpu_comm;
-  delete cpu_comm;
+  delete comm;
+  comm = nullptr;
 
   std::cout << "Client finished all transfers\n";
   return 0;

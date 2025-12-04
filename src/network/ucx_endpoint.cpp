@@ -476,12 +476,13 @@ status_t UCXEndpoint::setRemoteMemInfo(const UcxRemoteMemInfo &hdr,
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::writeData(size_t off, size_t size) {
+status_t UCXEndpoint::writeData(size_t local_off, size_t remote_off, size_t size) {
   if (!ep_ || !remote_rkey_ || !buffer_ || !buffer_->ptr) return status_t::ERROR;
-  if (off + size > remote_size_ || off + size > local_size_) return status_t::ERROR;
+  if (local_off + size > local_size_) return status_t::ERROR;
+  if (remote_off + size > remote_size_) return status_t::ERROR;
 
-  void *src = static_cast<char*>(buffer_->ptr) + off;
-  uint64_t dst = remote_base_ + off;
+  void *src = static_cast<char*>(buffer_->ptr) + local_off;
+  uint64_t dst = remote_base_ + remote_off;
 
   ucp_request_param_t p;
   std::memset(&p, 0, sizeof(p));
@@ -496,12 +497,13 @@ status_t UCXEndpoint::writeData(size_t off, size_t size) {
   return ucs_to_status(st);
 }
 
-status_t UCXEndpoint::readData(size_t off, size_t size) {
+status_t UCXEndpoint::readData(size_t local_off, size_t remote_off, size_t size) {
   if (!ep_ || !remote_rkey_ || !buffer_ || !buffer_->ptr) return status_t::ERROR;
-  if (off + size > remote_size_ || off + size > local_size_) return status_t::ERROR;
+  if (local_off + size > local_size_) return status_t::ERROR;
+  if (remote_off + size > remote_size_) return status_t::ERROR;
 
-  void *dst = static_cast<char*>(buffer_->ptr) + off;
-  uint64_t src = remote_base_ + off;
+  void *dst = static_cast<char*>(buffer_->ptr) + local_off;
+  uint64_t src = remote_base_ + remote_off;
 
   ucp_request_param_t p;
   std::memset(&p, 0, sizeof(p));
@@ -516,13 +518,14 @@ status_t UCXEndpoint::readData(size_t off, size_t size) {
   return ucs_to_status(st);
 }
 
-status_t UCXEndpoint::writeDataNB(size_t off, size_t size, uint64_t *wid) {
-  if (wid) *wid = 0;
+status_t UCXEndpoint::writeDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wrid) {
+  if (wrid) *wrid = 0;
   if (!ep_ || !remote_rkey_ || !buffer_ || !buffer_->ptr) return status_t::ERROR;
-  if (off + size > remote_size_ || off + size > local_size_) return status_t::ERROR;
+  if (local_off + size > local_size_) return status_t::ERROR;
+  if (remote_off + size > remote_size_) return status_t::ERROR;
 
-  void *src = static_cast<char*>(buffer_->ptr) + off;
-  uint64_t dst = remote_base_ + off;
+  void *src = static_cast<char*>(buffer_->ptr) + local_off;
+  uint64_t dst = remote_base_ + remote_off;
 
   ucp_request_param_t p;
   std::memset(&p, 0, sizeof(p));
@@ -530,22 +533,28 @@ status_t UCXEndpoint::writeDataNB(size_t off, size_t size, uint64_t *wid) {
   ucs_status_ptr_t req = ucp_put_nbx(ep_, src, size, dst, remote_rkey_, &p);
   if (UCS_PTR_IS_ERR(req)) return status_t::ERROR;
 
-  uint64_t id = next_wrid_.fetch_add(1);
+  if (req == nullptr) { // completed immediately
+    if (wrid) *wrid = 0;
+    return status_t::SUCCESS;
+  }
+
+  uint64_t id = next_wrid_.fetch_add(1, std::memory_order_relaxed) + 1; // avoid 0
   {
     std::lock_guard<std::mutex> lk(req_mutex_);
-    inflight_[id] = (req == nullptr) ? nullptr : req;
+    inflight_[id] = req;
   }
-  if (wid) *wid = id;
+  if (wrid) *wrid = id;
   return status_t::SUCCESS;
 }
 
-status_t UCXEndpoint::readDataNB(size_t off, size_t size, uint64_t *wid) {
-  if (wid) *wid = 0;
+status_t UCXEndpoint::readDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wrid) {
+  if (wrid) *wrid = 0;
   if (!ep_ || !remote_rkey_ || !buffer_ || !buffer_->ptr) return status_t::ERROR;
-  if (off + size > remote_size_ || off + size > local_size_) return status_t::ERROR;
+  if (local_off + size > local_size_) return status_t::ERROR;
+  if (remote_off + size > remote_size_) return status_t::ERROR;
 
-  void *dst = static_cast<char*>(buffer_->ptr) + off;
-  uint64_t src = remote_base_ + off;
+  void *dst = static_cast<char*>(buffer_->ptr) + local_off;
+  uint64_t src = remote_base_ + remote_off;
 
   ucp_request_param_t p;
   std::memset(&p, 0, sizeof(p));
@@ -553,12 +562,17 @@ status_t UCXEndpoint::readDataNB(size_t off, size_t size, uint64_t *wid) {
   ucs_status_ptr_t req = ucp_get_nbx(ep_, dst, size, src, remote_rkey_, &p);
   if (UCS_PTR_IS_ERR(req)) return status_t::ERROR;
 
-  uint64_t id = next_wrid_.fetch_add(1);
+  if (req == nullptr) { // completed immediately
+    if (wrid) *wrid = 0;
+    return status_t::SUCCESS;
+  }
+
+  uint64_t id = next_wrid_.fetch_add(1, std::memory_order_relaxed) + 1; // avoid 0
   {
     std::lock_guard<std::mutex> lk(req_mutex_);
-    inflight_[id] = (req == nullptr) ? nullptr : req;
+    inflight_[id] = req;
   }
-  if (wid) *wid = id;
+  if (wrid) *wrid = id;
   return status_t::SUCCESS;
 }
 
@@ -578,6 +592,86 @@ status_t UCXEndpoint::waitWrId(uint64_t wid) {
   ucs_status_t st = ucp_request_check_status(req);
   ucp_request_free(req);
   return ucs_to_status(st);
+}
+
+status_t UCXEndpoint::waitWrIdMulti(
+    const std::vector<uint64_t>& wrids,
+    std::chrono::milliseconds timeout) {
+
+  if (wrids.empty()) return status_t::SUCCESS;
+
+  std::vector<std::pair<uint64_t, void*>> pending;
+  pending.reserve(wrids.size());
+
+  {
+    std::lock_guard<std::mutex> lk(req_mutex_);
+    for (auto id : wrids) {
+      if (id == 0) continue; // treat as already done
+      auto it = inflight_.find(id);
+      if (it == inflight_.end()) {
+        return status_t::ERROR;
+      }
+      pending.emplace_back(id, it->second);
+      inflight_.erase(it);
+    }
+  }
+
+  std::vector<void*> reqs;
+  reqs.reserve(pending.size());
+  for (auto &kv : pending) {
+    if (kv.second != nullptr) reqs.push_back(kv.second);
+  }
+  if (reqs.empty()) return status_t::SUCCESS;
+
+  auto start_ts = std::chrono::steady_clock::now();
+  size_t last_left = reqs.size();
+
+  // We will compact reqs in-place by swap-remove finished ones.
+  while (!reqs.empty()) {
+    // drive progress a bit
+    ctx_->progress();
+
+    bool made_progress = false;
+
+    for (size_t i = 0; i < reqs.size(); /*increment inside*/) {
+      void* req = reqs[i];
+      auto st = ucp_request_check_status(req);
+      if (st == UCS_INPROGRESS) {
+        ++i;
+        continue;
+      }
+
+      // finished (success or error)
+      ucp_request_free(req);
+      // remove by swap with last
+      reqs[i] = reqs.back();
+      reqs.pop_back();
+      made_progress = true;
+    }
+
+    if (made_progress) {
+      if (reqs.size() != last_left) {
+        last_left = reqs.size();
+        // logDebug("UCX waitWrIdMulti: remaining=%zu", last_left);
+      }
+      continue;
+    }
+
+    // backoff
+#if defined(__x86_64__) || defined(_M_X64)
+    __builtin_ia32_pause();
+#elif defined(__aarch64__)
+    asm volatile("yield");
+#endif
+    std::this_thread::sleep_for(std::chrono::microseconds(50));
+
+    auto now = std::chrono::steady_clock::now();
+    if (now - start_ts > timeout) {
+      return status_t::TIMEOUT;
+    }
+  }
+
+  return status_t::SUCCESS;
 }
 
 status_t UCXEndpoint::closeEndpoint() {

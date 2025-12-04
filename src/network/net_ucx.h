@@ -94,12 +94,14 @@ public:
               std::shared_ptr<ConnBuffer> buffer);
   ~UCXEndpoint() override;
 
-  status_t writeData(size_t ptr_bias, size_t size) override;  // put
-  status_t readData(size_t ptr_bias, size_t size) override;   // get
+  status_t writeData(size_t local_off, size_t remote_off, size_t size) override;  // put
+  status_t readData(size_t local_off, size_t remote_off, size_t size) override;   // get
 
-  status_t writeDataNB(size_t ptr_bias, size_t size, uint64_t *wrid) override;
-  status_t readDataNB(size_t ptr_bias, size_t size, uint64_t *wrid) override;
+  status_t writeDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wrid) override;
+  status_t readDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wrid) override;
   status_t waitWrId(uint64_t wrid) override;
+  status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
+                                     std::chrono::milliseconds timeout = std::chrono::seconds(5)) override;
 
   status_t uhm_send(void *, const size_t, MemoryType) override {
     return status_t::UNSUPPORT;

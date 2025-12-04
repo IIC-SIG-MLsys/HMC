@@ -17,35 +17,160 @@ Communicator::~Communicator() {
   logDebug("finished");
 }
 
-status_t Communicator::writeTo(std::string ip, size_t ptr_bias, size_t size,
-                               ConnType connType) {
+status_t Communicator::put(std::string ip,
+                           size_t local_off,
+                           size_t remote_off,
+                           size_t size,
+                           ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if (sret != status_t::SUCCESS) {
-    return sret;
-  }
+  if (sret != status_t::SUCCESS) return sret;
 
   return conn_manager->withEndpoint(
-      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
-        if (!ep)
-          return status_t::ERROR;
-        return ep->writeData(ptr_bias, size); // 传递返回状态
+      ip, connType, [local_off, remote_off, size](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        return ep->writeData(local_off, remote_off, size);
       });
-};
+}
 
-status_t Communicator::readFrom(std::string ip, size_t ptr_bias, size_t size,
-                                ConnType connType) {
+status_t Communicator::get(std::string ip,
+                           size_t local_off,
+                           size_t remote_off,
+                           size_t size,
+                           ConnType connType) {
   status_t sret = checkConn(ip, connType);
-  if (sret != status_t::SUCCESS) {
-    return sret;
-  }
+  if (sret != status_t::SUCCESS) return sret;
 
   return conn_manager->withEndpoint(
-      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
-        if (!ep)
-          return status_t::ERROR;
-        return ep->readData(ptr_bias, size); // 传递返回状态
+      ip, connType, [local_off, remote_off, size](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        return ep->readData(local_off, remote_off, size);
       });
-};
+}
+
+status_t Communicator::putNB(std::string ip,
+                             size_t local_off,
+                             size_t remote_off,
+                             size_t size,
+                             uint64_t *wr_id,
+                             ConnType connType) {
+  if (wr_id) *wr_id = 0;
+
+  status_t sret = checkConn(ip, connType);
+  if (sret != status_t::SUCCESS) return sret;
+
+  status_t ret = conn_manager->withEndpoint(
+      ip, connType, [this, local_off, remote_off, size, wr_id](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+
+        uint64_t id = 0;
+        status_t r = ep->writeDataNB(local_off, remote_off, size, &id);
+        if (r != status_t::SUCCESS) return r;
+
+        if (wr_id) *wr_id = id;
+
+        if (id != 0) {
+          std::lock_guard<std::mutex> lk(inflight_mu_);
+          inflight_ep_[id] = ep;
+        }
+        return status_t::SUCCESS;
+      });
+
+  return ret;
+}
+
+status_t Communicator::getNB(std::string ip,
+                             size_t local_off,
+                             size_t remote_off,
+                             size_t size,
+                             uint64_t *wr_id,
+                             ConnType connType) {
+  if (wr_id) *wr_id = 0;
+
+  status_t sret = checkConn(ip, connType);
+  if (sret != status_t::SUCCESS) return sret;
+
+  status_t ret = conn_manager->withEndpoint(
+      ip, connType, [this, local_off, remote_off, size, wr_id](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+
+        uint64_t id = 0;
+        status_t r = ep->readDataNB(local_off, remote_off, size, &id);
+        if (r != status_t::SUCCESS) return r;
+
+        if (wr_id) *wr_id = id;
+
+        if (id != 0) {
+          std::lock_guard<std::mutex> lk(inflight_mu_);
+          inflight_ep_[id] = ep;
+        }
+        return status_t::SUCCESS;
+      });
+
+  return ret;
+}
+
+status_t Communicator::wait(uint64_t wr_id) {
+  if (wr_id == 0) return status_t::SUCCESS;
+
+  Endpoint *ep = nullptr;
+  {
+    std::lock_guard<std::mutex> lk(inflight_mu_);
+    auto it = inflight_ep_.find(wr_id);
+    if (it == inflight_ep_.end()) return status_t::NOT_FOUND;
+    ep = it->second;
+    inflight_ep_.erase(it);
+  }
+  if (!ep) return status_t::ERROR;
+
+  return ep->waitWrId(wr_id);
+}
+
+status_t Communicator::wait(const std::vector<uint64_t>& wr_ids) {
+  std::unordered_map<Endpoint*, std::vector<uint64_t>> by_ep;
+  by_ep.reserve(8);
+
+  {
+    std::lock_guard<std::mutex> lk(inflight_mu_);
+    for (uint64_t id : wr_ids) {
+      if (id == 0) continue;
+
+      auto it = inflight_ep_.find(id);
+      if (it == inflight_ep_.end()) {
+        return status_t::NOT_FOUND;
+      }
+      by_ep[it->second].push_back(id);
+      inflight_ep_.erase(it);
+    }
+  }
+
+  for (auto &kv : by_ep) {
+    Endpoint *ep = kv.first;
+    auto &ids = kv.second;
+    if (!ep) return status_t::ERROR;
+    if (ids.empty()) continue;
+
+    status_t r = ep->waitWrIdMulti(ids, std::chrono::milliseconds(1000));
+    if (r != status_t::SUCCESS) return r;
+  }
+
+  return status_t::SUCCESS;
+}
+
+status_t Communicator::ctrlSend(std::string ip, uint64_t tag) {
+  // use rdma send/recv  or  ucx tagMsg later
+  auto &ctrl = hmc::CtrlSocketManager::instance();
+  if (ctrl.sendCtrlU64(ip, tag)) return status_t::SUCCESS;
+  else return status_t::ERROR;
+}
+
+status_t Communicator::ctrlRecv(std::string ip, uint64_t *tag) {
+  // use rdma send/recv  or  ucx tagMsg later
+  auto &ctrl = hmc::CtrlSocketManager::instance();
+  uint64_t t = 0;
+  if (!ctrl.recvCtrlU64(ip, t)) return status_t::ERROR;
+  if (tag) *tag = t;
+  return status_t::SUCCESS;
+}
 
 status_t Communicator::sendDataTo(std::string ip, void *send_buf,
                                   size_t buf_size, MemoryType buf_type,
@@ -56,7 +181,7 @@ status_t Communicator::sendDataTo(std::string ip, void *send_buf,
   }
 
   return conn_manager->withEndpoint(
-      ip, [send_buf, buf_size, buf_type](Endpoint *ep) -> status_t {
+      ip, connType, [send_buf, buf_size, buf_type](Endpoint *ep) -> status_t {
         if (!ep)
           return status_t::ERROR;
         return ep->uhm_send(send_buf, buf_size, buf_type);
@@ -72,49 +197,11 @@ status_t Communicator::recvDataFrom(std::string ip, void *recv_buf,
   }
 
   return conn_manager->withEndpoint(
-      ip, [recv_buf, buf_size, flag, buf_type](Endpoint *ep) -> status_t {
+      ip, connType, [recv_buf, buf_size, flag, buf_type](Endpoint *ep) -> status_t {
         if (!ep)
           return status_t::ERROR;
         return ep->uhm_recv(recv_buf, buf_size, flag, buf_type);
       });
-};
-
-status_t Communicator::send(std::string ip, size_t ptr_bias, size_t size,
-                            ConnType connType) {
-  auto &ctrl = hmc::CtrlSocketManager::instance();
-  status_t sret = checkConn(ip, connType);
-  if (sret != status_t::SUCCESS) {
-    return sret;
-  }
-
-  sret = conn_manager->withEndpoint(
-      ip, [ptr_bias, size](Endpoint *ep) -> status_t {
-        if (!ep)
-          return status_t::ERROR;
-        return ep->writeData(ptr_bias, size); // 传递返回状态
-      });
-  if (sret != status_t::SUCCESS) {
-    ctrl.sendCtrlInt(ip, 1); // SUCCESS 1, FALSE 2
-  } else {
-    ctrl.sendCtrlInt(ip, 2);
-  }
-  return sret;
-};
-
-status_t Communicator::recv(std::string ip, size_t ptr_bias, size_t size,
-                            ConnType connType) {
-  auto &ctrl = hmc::CtrlSocketManager::instance();
-  status_t sret = checkConn(ip, connType);
-  if (sret != status_t::SUCCESS) {
-    return sret;
-  }
-
-  int ret;
-  ctrl.recvCtrlInt(ip, ret);
-  if (ret == 1)
-    return status_t::SUCCESS;
-  else
-    return status_t::ERROR;
 };
 
 status_t Communicator::connectTo(std::string ip, uint16_t port,
@@ -153,15 +240,15 @@ status_t Communicator::closeServer() {
 
 status_t Communicator::disConnect(std::string ip, ConnType connType) {
   if (checkConn(ip, connType) == status_t::SUCCESS) {
-    conn_manager->_removeEndpoint(ip);
+    conn_manager->_removeEndpoint(ip, connType);
   }
   return status_t::SUCCESS;
 };
 
 status_t Communicator::checkConn(std::string ip, ConnType connType) {
   return conn_manager->withEndpoint(
-      ip,
-      [](Endpoint *ep) -> status_t { // 显式指定返回类型
+      ip, connType,
+      [](Endpoint *ep) -> status_t {
         return ep ? status_t::SUCCESS : status_t::ERROR;
       });
 };
@@ -216,7 +303,7 @@ status_t ConnBuffer::readToCpu(void *dest, size_t size, size_t bias) {
     return status_t::ERROR;
   }
   if (mem_ops->getMemoryType() == MemoryType::CPU) {
-    memcpy(dest, static_cast<char *>(ptr), size);
+    memcpy(dest, static_cast<char *>(ptr) + bias, size);
     return status_t::SUCCESS;
   }
   return mem_ops->copyDeviceToHost(dest, static_cast<char *>(ptr) + bias, size);
@@ -250,6 +337,28 @@ status_t ConnBuffer::readToGpu(void *dest, size_t size, size_t bias) {
   }
   return mem_ops->copyDeviceToDevice(dest, static_cast<char *>(ptr) + bias,
                                      size);
+}
+
+status_t ConnBuffer::copyWithin(size_t dst_bias, size_t src_bias, size_t size) {
+  if (dst_bias + size > buffer_size || src_bias + size > buffer_size) {
+    logError("copyWithin: Invalid bias/size");
+    return status_t::ERROR;
+  }
+  if (size == 0 || dst_bias == src_bias) {
+    return status_t::SUCCESS;
+  }
+
+  void* dst = static_cast<char*>(ptr) + dst_bias;
+  void* src = static_cast<char*>(ptr) + src_bias;
+
+  if (mem_ops->getMemoryType() == MemoryType::CPU) {
+    // overlap-safe
+    memmove(dst, src, size);
+    return status_t::SUCCESS;
+  }
+
+  // device-to-device copy on the same device (CUDA/ROCm/MLU/Moore)
+  return mem_ops->copyDeviceToDevice(dst, src, size);
 }
 
 } // namespace hmc

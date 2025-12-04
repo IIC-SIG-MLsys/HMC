@@ -3,33 +3,32 @@
  */
 #include "hmc.h"
 #include "mem.h"
-
 #include "status.h"
+
 #include <functional>
 #include <memory>
-#include <pybind11/functional.h> // 用于 std::function 支持
+#include <stdexcept>
+#include <vector>
+
+#include <pybind11/functional.h>
 #include <pybind11/pybind11.h>
 
 namespace py = pybind11;
 
-// 用于封装内存缓冲区的包装类
 struct PyBufferWrapper {
-  void *ptr;                           // 内存指针
-  size_t size;                         // 分配的字节数
-  std::function<void(void *)> deleter; // 当对象析构时调用释放内存
+  void *ptr;
+  size_t size;
+  std::function<void(void *)> deleter;
 
   PyBufferWrapper(void *ptr, size_t size, std::function<void(void *)> deleter)
-      : ptr(ptr), size(size), deleter(deleter) {}
+      : ptr(ptr), size(size), deleter(std::move(deleter)) {}
 
   ~PyBufferWrapper() {
-    if (ptr && deleter) {
-      deleter(ptr);
-    }
+    if (ptr && deleter) deleter(ptr);
   }
 };
 
 PYBIND11_MODULE(hmc, m) {
-  // 内存类型枚举绑定
   py::enum_<hmc::MemoryType>(m, "MemoryType")
       .value("DEFAULT", hmc::MemoryType::DEFAULT)
       .value("CPU", hmc::MemoryType::CPU)
@@ -39,7 +38,6 @@ PYBIND11_MODULE(hmc, m) {
       .value("MOORE_GPU", hmc::MemoryType::MOORE_GPU)
       .export_values();
 
-  // Memory 类绑定
   py::class_<hmc::Memory>(m, "Memory")
       .def(py::init<int, hmc::MemoryType>(), py::arg("device_id"),
            py::arg("mem_type") = hmc::MemoryType::DEFAULT)
@@ -56,8 +54,8 @@ PYBIND11_MODULE(hmc, m) {
             auto status = self.allocateBuffer(&ptr, size);
             if (status != hmc::status_t::SUCCESS)
               return py::make_tuple(status, py::none());
-            auto buffer_wrapper = new PyBufferWrapper(
-                ptr, size, [&self](void *p) { self.freeBuffer(p); });
+            auto buffer_wrapper =
+                new PyBufferWrapper(ptr, size, [&self](void *p) { self.freeBuffer(p); });
             return py::make_tuple(status, py::cast(buffer_wrapper));
           },
           py::arg("size"))
@@ -68,8 +66,8 @@ PYBIND11_MODULE(hmc, m) {
             auto status = self.allocatePeerableBuffer(&ptr, size);
             if (status != hmc::status_t::SUCCESS)
               return py::make_tuple(status, py::none());
-            auto buffer_wrapper = new PyBufferWrapper(
-                ptr, size, [&self](void *p) { self.freeBuffer(p); });
+            auto buffer_wrapper =
+                new PyBufferWrapper(ptr, size, [&self](void *p) { self.freeBuffer(p); });
             return py::make_tuple(status, py::cast(buffer_wrapper));
           },
           py::arg("size"))
@@ -79,7 +77,6 @@ PYBIND11_MODULE(hmc, m) {
       .def("getInitStatus", &hmc::Memory::getInitStatus)
       .def("getDeviceId", &hmc::Memory::getDeviceId);
 
-  // 状态枚举绑定
   py::enum_<hmc::status_t>(m, "status_t")
       .value("SUCCESS", hmc::status_t::SUCCESS)
       .value("ERROR", hmc::status_t::ERROR)
@@ -89,189 +86,126 @@ PYBIND11_MODULE(hmc, m) {
       .value("TIMEOUT", hmc::status_t::TIMEOUT)
       .export_values();
 
-  // 通信类型枚举绑定
   py::enum_<hmc::ConnType>(m, "ConnType")
       .value("RDMA", hmc::ConnType::RDMA)
       .value("UCX", hmc::ConnType::UCX)
       .export_values();
 
-  // ConnBuffer 类绑定
   py::class_<hmc::ConnBuffer, std::shared_ptr<hmc::ConnBuffer>>(m, "ConnBuffer")
-      // 构造函数绑定
       .def(py::init<int, size_t, hmc::MemoryType>(), py::arg("device_id"),
-           py::arg("buffer_size"),
-           py::arg("mem_type") = hmc::MemoryType::DEFAULT,
-           "Create ConnBuffer with specified parameters")
-
-      // 暴露只读属性
-      // 属性绑定
-      .def_property_readonly(
-          "ptr",
-          [](const hmc::ConnBuffer &self) {
-            return reinterpret_cast<uintptr_t>(self.ptr);
-          },
-          "Buffer pointer address")
-      .def_property_readonly(
-          "buffer_size",
-          [](const hmc::ConnBuffer &self) { return self.buffer_size; },
-          "Allocated buffer size in bytes")
-
-      // CPU 数据传输
+           py::arg("buffer_size"), py::arg("mem_type") = hmc::MemoryType::DEFAULT)
+      .def_property_readonly("ptr",
+                             [](const hmc::ConnBuffer &self) {
+                               return reinterpret_cast<uintptr_t>(self.ptr);
+                             })
+      .def_property_readonly("buffer_size",
+                             [](const hmc::ConnBuffer &self) { return self.buffer_size; })
       .def(
           "writeFromCpu",
           [](hmc::ConnBuffer &self, py::buffer src, size_t size, size_t bias) {
             py::buffer_info info = src.request();
-            // 安全检查
-            if (size + bias > self.buffer_size) {
-              throw std::runtime_error(
-                  "Buffer overflow: size + bias exceeds buffer capacity");
-            }
-            if (info.size * info.itemsize < size) {
+            if (size + bias > self.buffer_size) throw std::runtime_error("Buffer overflow");
+            if (static_cast<size_t>(info.size * info.itemsize) < size)
               throw std::runtime_error("Source buffer too small");
-            }
             return self.writeFromCpu(info.ptr, size, bias);
           },
-          py::arg("src"), py::arg("size"), py::arg("bias") = 0,
-          "Copy data from CPU memory to buffer\n"
-          "Args:\n"
-          "    src (buffer): Python buffer object (bytes/bytearray/numpy "
-          "array)\n"
-          "    size (int): Number of bytes to copy\n"
-          "    bias (int): Offset in buffer (default 0)")
-
+          py::arg("src"), py::arg("size"), py::arg("bias") = 0)
       .def(
           "readToCpu",
           [](hmc::ConnBuffer &self, py::buffer dest, size_t size, size_t bias) {
             py::buffer_info info = dest.request();
-
-            // 安全检查
-            if (size + bias > self.buffer_size) {
-              throw std::runtime_error(
-                  "Buffer overflow: size + bias exceeds buffer capacity");
-            }
-            if (info.size * info.itemsize < size) {
+            if (size + bias > self.buffer_size) throw std::runtime_error("Buffer overflow");
+            if (static_cast<size_t>(info.size * info.itemsize) < size)
               throw std::runtime_error("Destination buffer too small");
-            }
-            if (info.readonly) {
-              throw std::runtime_error(
-                  "Destination buffer must be writeable (e.g. use bytearray)");
-            }
-
+            if (info.readonly) throw std::runtime_error("Destination buffer must be writeable");
             return self.readToCpu(info.ptr, size, bias);
           },
-          py::arg("dest"), py::arg("size"), py::arg("bias") = 0,
-          "Copy data from buffer to CPU memory\n"
-          "Args:\n"
-          "    dest (buffer): Writeable Python buffer (bytearray/numpy array)\n"
-          "    size (int): Number of bytes to copy\n"
-          "    bias (int): Offset in buffer (default 0)")
-
-      // GPU 数据传输（假设使用设备指针地址）
+          py::arg("dest"), py::arg("size"), py::arg("bias") = 0)
       .def(
           "writeFromGpu",
-          [](hmc::ConnBuffer &self, uintptr_t src_ptr, size_t size,
-             size_t bias) {
-            if (size + bias > self.buffer_size) {
-              throw std::runtime_error(
-                  "Buffer overflow: size + bias exceeds buffer capacity");
-            }
-            return self.writeFromGpu(reinterpret_cast<void *>(src_ptr), size,
-                                     bias);
+          [](hmc::ConnBuffer &self, uintptr_t src_ptr, size_t size, size_t bias) {
+            if (size + bias > self.buffer_size) throw std::runtime_error("Buffer overflow");
+            return self.writeFromGpu(reinterpret_cast<void *>(src_ptr), size, bias);
           },
-          py::arg("src_ptr"), py::arg("size"), py::arg("bias") = 0,
-          "Copy data from GPU memory to buffer\n"
-          "Args:\n"
-          "    src_ptr (int): GPU memory address (e.g. from PyCUDA)\n"
-          "    size (int): Number of bytes to copy\n"
-          "    bias (int): Offset in buffer (default 0)")
-
+          py::arg("src_ptr"), py::arg("size"), py::arg("bias") = 0)
       .def(
           "readToGpu",
-          [](hmc::ConnBuffer &self, uintptr_t dest_ptr, size_t size,
-             size_t bias) {
-            if (size + bias > self.buffer_size) {
-              throw std::runtime_error(
-                  "Buffer overflow: size + bias exceeds buffer capacity");
-            }
-            return self.readToGpu(reinterpret_cast<void *>(dest_ptr), size,
-                                  bias);
+          [](hmc::ConnBuffer &self, uintptr_t dest_ptr, size_t size, size_t bias) {
+            if (size + bias > self.buffer_size) throw std::runtime_error("Buffer overflow");
+            return self.readToGpu(reinterpret_cast<void *>(dest_ptr), size, bias);
           },
-          py::arg("dest_ptr"), py::arg("size"), py::arg("bias") = 0,
-          "Copy data from buffer to GPU memory\n"
-          "Args:\n"
-          "    dest_ptr (int): GPU memory address (e.g. from PyCUDA)\n"
-          "    size (int): Number of bytes to copy\n"
-          "    bias (int): Offset in buffer (default 0)");
+          py::arg("dest_ptr"), py::arg("size"), py::arg("bias") = 0)
+      .def(
+          "copyWithin",
+          [](hmc::ConnBuffer &self, size_t dst_bias, size_t src_bias, size_t size) {
+            if (dst_bias + size > self.buffer_size || src_bias + size > self.buffer_size)
+              throw std::runtime_error("Buffer overflow");
+            return self.copyWithin(dst_bias, src_bias, size);
+          },
+          py::arg("dst_bias"), py::arg("src_bias"), py::arg("size"));
 
-  // Communicator 类绑定
   py::class_<hmc::Communicator, std::shared_ptr<hmc::Communicator>>(m, "Communicator")
-      // Bind the actual C++ constructor: Communicator(std::shared_ptr<ConnBuffer>, size_t num_chs=1)
-      .def(py::init<std::shared_ptr<hmc::ConnBuffer>, size_t>(),
-           "Constructor for Communicator",
-           py::arg("buffer"), py::arg("num_chs") = 1)
-      // Convenience overload: accept a Python object that can be cast to
-      // std::shared_ptr<ConnBuffer> (allows passing a ConnBuffer instance
-      // created on the Python side). Also allow optional num_chs.
+      .def(py::init<std::shared_ptr<hmc::ConnBuffer>, size_t>(), py::arg("buffer"),
+           py::arg("num_chs") = 1)
       .def(py::init([](py::object buf, size_t num_chs) {
-             try {
-               auto sp = buf.cast<std::shared_ptr<hmc::ConnBuffer>>();
-               return std::make_shared<hmc::Communicator>(sp, num_chs);
-             } catch (const std::exception &e) {
-               throw std::runtime_error(
-                   std::string("Communicator constructor expects a hmc.ConnBuffer or shared_ptr<ConnBuffer>: ") + e.what());
-             }
+             auto sp = buf.cast<std::shared_ptr<hmc::ConnBuffer>>();
+             return std::make_shared<hmc::Communicator>(sp, num_chs);
            }),
-           py::arg("buffer"), py::arg("num_chs") = 1,
-           "Constructor wrapper that accepts a Python ConnBuffer and optional num_chs")
-      .def("writeTo", &hmc::Communicator::writeTo, "Send data to remote",
-           py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
+           py::arg("buffer"), py::arg("num_chs") = 1)
+      .def("put", &hmc::Communicator::put, py::arg("ip"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("readFrom", &hmc::Communicator::readFrom, "Read data from remote",
-           py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
+      .def("get", &hmc::Communicator::get, py::arg("ip"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("send", &hmc::Communicator::send, "Send data (p2p)", py::arg("ip"),
-           py::arg("ptr_bias"), py::arg("size"),
+      .def("putNB", &hmc::Communicator::putNB, py::arg("ip"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"), py::arg("wr_id"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("recv", &hmc::Communicator::recv, "Recv data (p2p, blocked)",
-           py::arg("ip"), py::arg("ptr_bias"), py::arg("size"),
+      .def("getNB", &hmc::Communicator::getNB, py::arg("ip"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"), py::arg("wr_id"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("sendDataTo", &hmc::Communicator::sendDataTo,
-           "Send buffer to remote", py::arg("ip"), py::arg("send_buf"),
-           py::arg("buf_size"), py::arg("buf_type"),
+      .def("wait",
+           py::overload_cast<uint64_t>(&hmc::Communicator::wait),
+           py::arg("wr_id"))
+      .def("wait",
+           py::overload_cast<const std::vector<uint64_t> &>(&hmc::Communicator::wait),
+           py::arg("wr_ids"))
+      .def("ctrlSend", &hmc::Communicator::ctrlSend, py::arg("ip"), py::arg("tag"))
+      .def("ctrlRecv",
+           [](hmc::Communicator &self, const std::string &ip) {
+             uint64_t tag = 0;
+             auto st = self.ctrlRecv(ip, &tag);
+             return py::make_tuple(st, tag);
+           },
+           py::arg("ip"))
+      .def("sendDataTo", &hmc::Communicator::sendDataTo, py::arg("ip"),
+           py::arg("send_buf"), py::arg("buf_size"), py::arg("buf_type"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("recvDataFrom", &hmc::Communicator::recvDataFrom,
-           "Receive buffer from remote", py::arg("ip"), py::arg("recv_buf"),
-           py::arg("buf_size"), py::arg("buf_type"), py::arg("flag"),
+      .def("recvDataFrom", &hmc::Communicator::recvDataFrom, py::arg("ip"),
+           py::arg("recv_buf"), py::arg("buf_size"), py::arg("buf_type"),
+           py::arg("flag"), py::arg("connType") = hmc::ConnType::RDMA)
+      .def("connectTo", &hmc::Communicator::connectTo, py::arg("ip"), py::arg("port"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("connectTo", &hmc::Communicator::connectTo,
-           "Connect to a new communicator", py::arg("ip"), py::arg("port"),
+      .def("initServer", &hmc::Communicator::initServer, py::arg("ip"), py::arg("port"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("initServer", &hmc::Communicator::initServer, "Start a new Server",
-           py::arg("ip"), py::arg("port"),
+      .def("closeServer", &hmc::Communicator::closeServer)
+      .def("disConnect", &hmc::Communicator::disConnect, py::arg("ip"),
            py::arg("connType") = hmc::ConnType::RDMA)
-      .def("closeServer", &hmc::Communicator::closeServer, "Close server")
-      .def("disConnect", &hmc::Communicator::disConnect, "Disconnect endpoint",
-           py::arg("ip"), py::arg("connType") = hmc::ConnType::RDMA)
-      .def("checkConn", &hmc::Communicator::checkConn, "Check connection",
-           py::arg("ip"), py::arg("connType") = hmc::ConnType::RDMA);
+      .def("checkConn", &hmc::Communicator::checkConn, py::arg("ip"),
+           py::arg("connType") = hmc::ConnType::RDMA);
 
-  // 为 PyBufferWrapper 类绑定并实现 buffer 协议，使其可直接转换为 memoryview
   py::class_<PyBufferWrapper>(m, "Buffer", py::buffer_protocol())
       .def_buffer([](PyBufferWrapper &b) -> py::buffer_info {
         return py::buffer_info(
-            b.ptr,                 // 内存起始地址
-            sizeof(unsigned char), // 单个元素大小
-            py::format_descriptor<unsigned char>::format(), // 元素格式（此处以
-                                                            // byte 为例）
-            1,                      // 维度数
-            {b.size},               // 每一维的大小
-            {sizeof(unsigned char)} // 每一维的步长
-        );
+            b.ptr,
+            sizeof(unsigned char),
+            py::format_descriptor<unsigned char>::format(),
+            1,
+            {b.size},
+            {sizeof(unsigned char)});
       });
 
-  // 导出内存支持查询函数
-  m.def("memory_supported", &hmc::memory_supported,
-        "Get the supported memory type");
+  m.def("memory_supported", &hmc::memory_supported, "Get the supported memory type");
 }
 
 /*

@@ -192,225 +192,106 @@ status_t RDMAEndpoint::closeEndpoint() {
 /*                          RDMA Read/Write API                               */
 /* -------------------------------------------------------------------------- */
 
-status_t RDMAEndpoint::writeData(size_t data_bias, size_t size) {
-  if (data_bias + size > buffer->buffer_size) {
-    logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld",
-             buffer->buffer_size, data_bias + size);
+status_t RDMAEndpoint::writeData(size_t local_off, size_t remote_off, size_t size) {
+  // local range check
+  if (local_off + size > buffer->buffer_size) {
+    logError("writeData: local range invalid, local_off=%zu size=%zu buf=%zu",
+             local_off, size, buffer->buffer_size);
+    return status_t::ERROR;
+  }
+  // remote range check (needs remote_metadata_attr.length valid)
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("writeData: remote range invalid, remote_off=%zu size=%zu remote_len=%u",
+             remote_off, size, remote_metadata_attr.length);
     return status_t::ERROR;
   }
 
-  /* single qp version */
   uint64_t wr_id;
-  if (writeDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
-    logError("Error for post_write");
+  if (writeDataNB(local_off, remote_off, size, &wr_id) != status_t::SUCCESS) {
+    logError("writeData: post_write failed");
     return status_t::ERROR;
   }
   if (waitWrId(wr_id) != status_t::SUCCESS) {
-    logError("Error for waiting writeData finished");
+    logError("writeData: waitWrId failed");
     return status_t::ERROR;
   }
-
-  /* single qp multi wrs version */
-  // uint64_t wr_id;
-  // if (writeDataNB_2(data_bias, size, &wr_id) != status_t::SUCCESS) {
-  //   logError("Error for post_write");
-  //   return status_t::ERROR;
-  // }
-  // if (waitWrId(wr_id) != status_t::SUCCESS) {
-  //   logError("Error for waiting writeData finished");
-  //   return status_t::ERROR;
-  // }
-
-  /* multi qp version */
-  // std::vector<uint64_t> wr_ids;
-  // status_t ret = writeDataNBMulti(data_bias, size, &wr_ids);
-  // if (ret != status_t::SUCCESS) {
-  //   logError("writeDataNB failed");
-  //   return ret;
-  // }
-  // for (auto wr : wr_ids) {
-  //   if (waitWrId(wr) != status_t::SUCCESS) {
-  //     logError("Error waiting for writeData WR %lu finished", wr);
-  //     return status_t::ERROR;
-  //   }
-  // }
   return status_t::SUCCESS;
 }
 
-status_t RDMAEndpoint::writeDataNB(size_t data_bias, size_t size,
-                                   uint64_t *wr_id) {
-  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
-  void *remoteAddr =
-      reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
-  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-  size_t qp_idx = *wr_id % num_qps_;
-  return postWrite(localAddr, remoteAddr, size, buffer_mr,
-                   remote_metadata_attr.key, *wr_id, true, qp_idx);
-}
-
-status_t RDMAEndpoint::writeDataNB_2(size_t data_bias, size_t size,
-                                     uint64_t *wr_id) {
-  const size_t chunk_size = 128 * 1024;  // 64KB
-
-  if (data_bias + size > buffer->buffer_size) {
-    logError("writeDataNB_2: invalid range, buffer_size=%zu, request_end=%zu",
-             buffer->buffer_size, data_bias + size);
-    return status_t::ERROR;
-  }
-
-  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-  size_t qp_idx = *wr_id % num_qps_;
-
-  size_t remaining = size;
-  size_t offset = 0;
-  uint64_t cur_wr_id = *wr_id;
-
-  while (remaining > 0) {
-    size_t this_size = std::min(chunk_size, remaining);
-    void *localAddr =
-        static_cast<char *>(buffer->ptr) + data_bias + offset;
-    void *remoteAddr =
-        reinterpret_cast<char *>(remote_metadata_attr.address) +
-        data_bias + offset;
-
-    bool signaled = (remaining <= chunk_size);  // only the last WR signaled
-
-    status_t ret = postWrite(localAddr, remoteAddr, this_size, buffer_mr,
-                             remote_metadata_attr.key, cur_wr_id, signaled,
-                             qp_idx);
-    if (ret != status_t::SUCCESS) {
-      logError("writeDataNB_2: postWrite failed at offset %zu (size=%zu)", offset, this_size);
-      return ret;
-    }
-
-    offset += this_size;
-    remaining -= this_size;
-  }
-
-  return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::writeDataNBMulti(size_t data_bias, size_t size,
-                                   std::vector<uint64_t> *wr_ids) {
-  if (num_qps_ == 0 || qps_.empty()) {
-    logError("writeDataNB: No QPs available");
-    return status_t::ERROR;
-  }
-  if (!wr_ids) {
-    logError("writeDataNB: wr_ids pointer is null");
-    return status_t::ERROR;
-  }
-
-  wr_ids->clear();
-
-  const size_t chunk_size = (size + num_qps_ - 1) / num_qps_;
-  const size_t actual_qps = std::min(num_qps_, (size + chunk_size - 1) / chunk_size);
-
-  for (size_t i = 0; i < actual_qps; ++i) {
-    size_t offset = data_bias + i * chunk_size;
-    size_t write_size = std::min(chunk_size, size - i * chunk_size);
-    if (write_size == 0) break;
-
-    void *localAddr = static_cast<char *>(buffer->ptr) + offset;
-    void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + offset;
-
-    uint64_t local_wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-    wr_ids->push_back(local_wr_id);
-
-    status_t ret = postWrite(localAddr, remoteAddr, write_size,
-                             buffer_mr, remote_metadata_attr.key,
-                             local_wr_id, true, i % num_qps_);
-    if (ret != status_t::SUCCESS) {
-      logError("writeDataNB: postWrite failed on QP[%zu]", i);
-      return ret;
-    }
-  }
-
-  return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::readData(size_t data_bias, size_t size) {
-  if (data_bias + size > buffer->buffer_size) {
-    logError("Invalid data bias and size, buffer_size %ld, data_bias+size %ld",
-             buffer->buffer_size, data_bias + size);
-    return status_t::ERROR;
-  }
-
-  /* single qp version */
-  uint64_t wr_id;
-  if (readDataNB(data_bias, size, &wr_id) != status_t::SUCCESS) {
-    logError("Error for post_read");
-    return status_t::ERROR;
-  }
-  if (waitWrId(wr_id) != status_t::SUCCESS) {
-    logError("Error for waiting writeData finished");
-    return status_t::ERROR;
-  }
-
-  /* multi qp version */
-  // std::vector<uint64_t> wr_ids;
-  // status_t ret = readDataNBMulti(data_bias, size, &wr_ids);
-  // if (ret != status_t::SUCCESS) {
-  //   logError("readDataNB failed");
-  //   return ret;
-  // }
-  // for (auto wr : wr_ids) {
-  //   if (waitWrId(wr) != status_t::SUCCESS) {
-  //     logError("Error waiting for readData WR %lu finished", wr);
-  //     return status_t::ERROR;
-  //   }
-  // }
-  return status_t::SUCCESS;
-}
-
-status_t RDMAEndpoint::readDataNB(size_t data_bias, size_t size,
+status_t RDMAEndpoint::writeDataNB(size_t local_off, size_t remote_off, size_t size,
                                   uint64_t *wr_id) {
-  void *localAddr = static_cast<char *>(buffer->ptr) + data_bias;
-  void *remoteAddr =
-      reinterpret_cast<char *>(remote_metadata_attr.address) + data_bias;
+  if (!wr_id) return status_t::ERROR;
+
+  if (local_off + size > buffer->buffer_size) {
+    logError("writeDataNB: local range invalid, local_off=%zu size=%zu buf=%zu",
+             local_off, size, buffer->buffer_size);
+    return status_t::ERROR;
+  }
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("writeDataNB: remote range invalid, remote_off=%zu size=%zu remote_len=%u",
+             remote_off, size, remote_metadata_attr.length);
+    return status_t::ERROR;
+  }
+
+  void *localAddr  = static_cast<char *>(buffer->ptr) + local_off;
+  void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + remote_off;
+
   *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-  size_t qp_idx = *wr_id % num_qps_;
-  return postRead(localAddr, remoteAddr, size, buffer_mr,
-                  remote_metadata_attr.key, *wr_id, true, qp_idx);
+  size_t qp_idx = (*wr_id) % num_qps_;
+
+  return postWrite(localAddr, remoteAddr, size, buffer_mr,
+                   remote_metadata_attr.key, *wr_id, /*signaled=*/true, qp_idx);
 }
 
-status_t RDMAEndpoint::readDataNBMulti(size_t data_bias, size_t size,
-                                  std::vector<uint64_t> *wr_ids) {
-  if (num_qps_ == 0 || qps_.empty()) {
-    logError("readDataNB: No QPs available");
+status_t RDMAEndpoint::readData(size_t local_off, size_t remote_off, size_t size) {
+  // local range check
+  if (local_off + size > buffer->buffer_size) {
+    logError("readData: local range invalid, local_off=%zu size=%zu buf=%zu",
+             local_off, size, buffer->buffer_size);
     return status_t::ERROR;
   }
-  if (!wr_ids) {
-    logError("readDataNB: wr_ids pointer is null");
+  // remote range check
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("readData: remote range invalid, remote_off=%zu size=%zu remote_len=%u",
+             remote_off, size, remote_metadata_attr.length);
     return status_t::ERROR;
   }
 
-  wr_ids->clear();
-
-  const size_t chunk_size = (size + num_qps_ - 1) / num_qps_;
-  const size_t actual_qps = std::min(num_qps_, (size + chunk_size - 1) / chunk_size);
-
-  for (size_t i = 0; i < actual_qps; ++i) {
-    size_t offset = data_bias + i * chunk_size;
-    size_t read_size = std::min(chunk_size, size - i * chunk_size);
-    if (read_size == 0) break;
-
-    void *localAddr = static_cast<char *>(buffer->ptr) + offset;
-    void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + offset;
-
-    uint64_t local_wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-    wr_ids->push_back(local_wr_id);
-
-    status_t ret = postRead(localAddr, remoteAddr, read_size,
-                            buffer_mr, remote_metadata_attr.key,
-                            local_wr_id, true, i % num_qps_);
-    if (ret != status_t::SUCCESS) {
-      logError("readDataNB: postRead failed on QP[%zu]", i);
-      return ret;
-    }
+  uint64_t wr_id;
+  if (readDataNB(local_off, remote_off, size, &wr_id) != status_t::SUCCESS) {
+    logError("readData: post_read failed");
+    return status_t::ERROR;
   }
-
+  if (waitWrId(wr_id) != status_t::SUCCESS) {
+    logError("readData: waitWrId failed");
+    return status_t::ERROR;
+  }
   return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::readDataNB(size_t local_off, size_t remote_off, size_t size,
+                                 uint64_t *wr_id) {
+  if (!wr_id) return status_t::ERROR;
+
+  if (local_off + size > buffer->buffer_size) {
+    logError("readDataNB: local range invalid, local_off=%zu size=%zu buf=%zu",
+             local_off, size, buffer->buffer_size);
+    return status_t::ERROR;
+  }
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("readDataNB: remote range invalid, remote_off=%zu size=%zu remote_len=%u",
+             remote_off, size, remote_metadata_attr.length);
+    return status_t::ERROR;
+  }
+
+  void *localAddr  = static_cast<char *>(buffer->ptr) + local_off;
+  void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + remote_off;
+
+  *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
+  size_t qp_idx = (*wr_id) % num_qps_;
+
+  return postRead(localAddr, remoteAddr, size, buffer_mr,
+                  remote_metadata_attr.key, *wr_id, /*signaled=*/true, qp_idx);
 }
 
 /* -------------------------------------------------------------------------- */
@@ -951,7 +832,7 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
 }
 
 status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
-                                     std::chrono::milliseconds timeout /* = std::chrono::seconds(5) */) {
+                                     std::chrono::milliseconds timeout) {
   if (!cq) {
     logError("waitWrIdMulti: CQ is null");
     return status_t::ERROR;
