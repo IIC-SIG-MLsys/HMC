@@ -108,9 +108,10 @@ def _accept_ctrl(ctrl_bind_ip: str, ctrl_port: int) -> Tuple[socket.socket, Tupl
     return s, addr, conn
 
 
-def _torch_cuda_ptr(t) -> int:
+def _torch_gpu_ptr(t) -> int:
+    # torch on ROCm still uses torch.cuda APIs; device backend is HIP.
     if not getattr(t, "is_cuda", False):
-        raise ValueError("tensor is not CUDA")
+        raise ValueError("tensor is not on GPU (torch.cuda/ROCm)")
     if not t.is_contiguous():
         t = t.contiguous()
     return int(t.data_ptr())
@@ -118,12 +119,12 @@ def _torch_cuda_ptr(t) -> int:
 
 def _ensure_gpu_tensor(torch, device: int, need_bytes: int, buf):
     """
-    Reuse a single CUDA uint8 tensor big enough (>= need_bytes).
+    Reuse a single GPU uint8 tensor big enough (>= need_bytes).
     Returns (tensor, ptr).
     """
     if buf is None or int(buf.numel()) < int(need_bytes):
         buf = torch.empty((int(need_bytes),), device=f"cuda:{device}", dtype=torch.uint8)
-    return buf, _torch_cuda_ptr(buf)
+    return buf, _torch_gpu_ptr(buf)
 
 
 def run_server(
@@ -139,10 +140,15 @@ def run_server(
 ) -> None:
     torch = _try_import_torch()
     if gpu and torch is None:
-        raise SystemExit("GPU mode requires torch with GPU")
+        raise SystemExit("GPU mode requires torch (ROCm)")
 
     mem_type = hmc.MemoryType.AMD_GPU if gpu else hmc.MemoryType.CPU
-    sess = hmc.create_session(device_id=device, buffer_size=buffer_size, mem_type=mem_type, num_chs=1)
+    sess = hmc.create_session(
+        device_id=device,
+        buffer_size=buffer_size,
+        mem_type=mem_type,
+        num_chs=1,
+    )
 
     # Start servers on different ports
     sess.init_server(bind_ip, ucx_port, conn=hmc.ConnType.UCX)
@@ -156,14 +162,15 @@ def run_server(
     print(f"[server] CTRL listening on {ctrl_bind_ip}:{ctrl_port}")
     print(f"[server] CTRL accepted from {addr[0]}:{addr[1]}")
 
-    client_ip = addr[0]
-
     current_mode: Optional[str] = None
     current_conn: Optional[hmc.ConnType] = None
 
     # verification buffers
     head_cpu = bytearray(64)
-    head_gpu = None  # torch tensor on cuda
+    head_gpu = None  # torch tensor on GPU
+
+    # sequence for DONE messages
+    last_done_seq: int = 0
 
     try:
         hello = ctrl_recv_msg(conn).decode(errors="ignore")
@@ -185,15 +192,42 @@ def run_server(
                 else:
                     ctrl_send_msg(conn, b"ERR_BAD_MODE")
                     continue
+                last_done_seq = 0
                 print(f"[server] switch mode -> {current_mode}")
                 ctrl_send_msg(conn, b"OK")
                 continue
 
             if msg.startswith(b"DONE "):
-                # DONE <size> - only sync ACK for timing; actual verify happens on CASE_END
+                # DONE <size> <seq>
                 if current_conn is None:
                     ctrl_send_msg(conn, b"ERR_NO_MODE")
                     continue
+                parts = msg.split()
+                if len(parts) != 3:
+                    ctrl_send_msg(conn, b"ERR_BAD_DONE")
+                    continue
+                try:
+                    sz = int(parts[1])
+                    seq = int(parts[2])
+                except Exception:
+                    ctrl_send_msg(conn, b"ERR_BAD_DONE")
+                    continue
+
+                if seq != last_done_seq + 1:
+                    print(f"[server] WARN: DONE seq jump: got={seq} expected={last_done_seq + 1} (size={sz})")
+                last_done_seq = seq
+
+                # If verify is enabled, touch local ConnBuffer before ACK (forces a small read path).
+                if verify:
+                    n = min(64, sz)
+                    if gpu:
+                        head_gpu, head_ptr = _ensure_gpu_tensor(torch, device, n, head_gpu)
+                        sess.buf.buffer_get_gpu_ptr(head_ptr, nbytes=int(n), offset=0)
+                        _ = int(head_gpu[0].item()) if n > 0 else 0
+                    else:
+                        sess.buf.buffer_get_cpu_into(head_cpu, nbytes=int(n), offset=0)
+                        _ = head_cpu[0] if n > 0 else 0
+
                 ctrl_send_msg(conn, b"ACK")
                 continue
 
@@ -208,12 +242,9 @@ def run_server(
                     continue
 
                 if verify:
-                    # Pull remote -> local buffer once and check header
-                    sess.read_from(client_ip, 0, sz, conn=current_conn)
+                    # Verify by reading LOCAL ConnBuffer only (no read_from remote!)
                     n = min(64, sz)
-
                     if gpu:
-                        # local buffer is GPU: pull head to GPU tensor then to CPU
                         head_gpu, head_ptr = _ensure_gpu_tensor(torch, device, n, head_gpu)
                         sess.buf.buffer_get_gpu_ptr(head_ptr, nbytes=int(n), offset=0)
                         ok = bool((head_gpu[:n].cpu() == 0x41).all().item())
@@ -256,10 +287,15 @@ def run_client(
 ) -> List[Result]:
     torch = _try_import_torch()
     if gpu and torch is None:
-        raise SystemExit("GPU mode requires torch with GPU")
+        raise SystemExit("GPU mode requires torch (ROCm)")
 
     mem_type = hmc.MemoryType.AMD_GPU if gpu else hmc.MemoryType.CPU
-    sess = hmc.create_session(device_id=device, buffer_size=buffer_size, mem_type=mem_type, num_chs=1)
+    sess = hmc.create_session(
+        device_id=device,
+        buffer_size=buffer_size,
+        mem_type=mem_type,
+        num_chs=1,
+    )
 
     # Connect control channel first
     ctrl = socket.create_connection((ctrl_ip, ctrl_port))
@@ -274,7 +310,6 @@ def run_client(
         ("ucx", hmc.ConnType.UCX, ucx_port),
     ]
     if gpu:
-        # allow selecting transports in GPU mode
         if gpu_conn == "rdma":
             cases = [c for c in all_cases if c[0] == "rdma"]
         elif gpu_conn == "ucx":
@@ -284,15 +319,16 @@ def run_client(
     else:
         cases = all_cases
 
-    # reuse buffers to avoid alloc overhead polluting results
     payload = b""
     payload_size = 0
-    cuda_buf = None
-    cuda_ptr = 0
-    cuda_size = 0
+
+    gpu_buf = None
+    gpu_ptr = 0
+    gpu_size = 0
+
+    done_seq = 0  # monotonically increasing across all sends
 
     for conn_name, conn_type, port in cases:
-        # connect the right port for this transport
         sess.connect(server_ip, port, conn=conn_type)
 
         ctrl_send_msg(ctrl, f"MODE {conn_name}".encode())
@@ -305,28 +341,26 @@ def run_client(
                 raise ValueError(f"payload size {sz} > buffer_size {buffer_size}")
 
             if gpu:
-                # ensure cuda buffer enough and fill only valid region
-                if cuda_buf is None or cuda_size < sz:
-                    cuda_buf = torch.empty((sz,), device=f"cuda:{device}", dtype=torch.uint8)
-                    cuda_ptr = _torch_cuda_ptr(cuda_buf)
-                    cuda_size = sz
-                cuda_buf[:sz].fill_(0x41)
-                sess.buf.buffer_put_gpu_ptr(cuda_ptr, nbytes=sz, offset=0)
-                put_fn = None  # direct conn buffer write already done
+                if gpu_buf is None or gpu_size < sz:
+                    gpu_buf = torch.empty((sz,), device=f"cuda:{device}", dtype=torch.uint8)
+                    gpu_ptr = _torch_gpu_ptr(gpu_buf)
+                    gpu_size = sz
+                gpu_buf[:sz].fill_(0x41)
+                sess.buf.buffer_put_gpu_ptr(gpu_ptr, nbytes=sz, offset=0)
             else:
                 if payload_size != sz:
                     payload = make_payload(sz, 0x41)
                     payload_size = sz
-                put_fn = True
 
             # warmup
             for _ in range(warmup):
                 if not gpu:
                     sess.put(server_ip, payload, conn=conn_type, bias=0)
                 else:
-                    # already in conn buffer -> just write
                     sess.write_to(server_ip, 0, sz, conn=conn_type)
-                ctrl_send_msg(ctrl, f"DONE {sz}".encode())
+
+                done_seq += 1
+                ctrl_send_msg(ctrl, f"DONE {sz} {done_seq}".encode())
                 _ = ctrl_recv_msg(ctrl)  # ACK
 
             # timed
@@ -339,12 +373,12 @@ def run_client(
                 if not gpu:
                     sess.put(server_ip, payload, conn=conn_type, bias=0)
                 else:
-                    # keep data fresh (optional): for correctness you can re-fill every iter; for perf, skip.
-                    # cuda_buf[:sz].fill_(0x41)
-                    sess.buf.buffer_put_gpu_ptr(cuda_ptr, nbytes=sz, offset=0)
+                    # strict correctness: re-put pointer region each iter (keeps local buffer hot)
+                    sess.buf.buffer_put_gpu_ptr(gpu_ptr, nbytes=sz, offset=0)
                     sess.write_to(server_ip, 0, sz, conn=conn_type)
 
-                ctrl_send_msg(ctrl, f"DONE {sz}".encode())
+                done_seq += 1
+                ctrl_send_msg(ctrl, f"DONE {sz} {done_seq}".encode())
                 _ = ctrl_recv_msg(ctrl)  # ACK
 
                 iter1 = time.perf_counter()
@@ -370,7 +404,6 @@ def run_client(
                 f"{res.mib_s:.2f} MiB/s  {res.gbps:.2f} Gbps"
             )
 
-            # server verify once per size
             ctrl_send_msg(ctrl, f"CASE_END {sz}".encode())
             _ = ctrl_recv_msg(ctrl)
 
@@ -394,7 +427,10 @@ def print_results(results: List[Result]) -> None:
     print("conn   size     iters    MiB/s       Gbps      avg RTT (us)")
     print("-----  -------  ------  ----------  ---------  ------------")
     for r in results:
-        print(f"{r.conn:<5}  {fmt_size(r.size):<7}  {r.iters:<6}  {r.mib_s:>10.2f}  {r.gbps:>9.2f}  {r.avg_rtt_us:>12.2f}")
+        print(
+            f"{r.conn:<5}  {fmt_size(r.size):<7}  {r.iters:<6}  "
+            f"{r.mib_s:>10.2f}  {r.gbps:>9.2f}  {r.avg_rtt_us:>12.2f}"
+        )
 
     print("\n=== UCX vs RDMA (MiB/s ratio) ===")
     by_size = {}
@@ -408,7 +444,7 @@ def print_results(results: List[Result]) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="HMC UCX vs RDMA perf benchmark (CPU/GPU, separate ports)")
+    ap = argparse.ArgumentParser(description="HMC UCX vs RDMA perf benchmark (ROCm GPU/CPU, separate ports)")
     ap.add_argument("--role", choices=["server", "client"], required=True)
 
     ap.add_argument("--bind-ip", default="0.0.0.0", help="HMC bind IP (server role)")
@@ -427,8 +463,8 @@ def main() -> None:
     ap.add_argument("--warmup", type=int, default=20, help="Warmup iterations per size")
     ap.add_argument("--verify", action="store_true", help="Server verifies payload header once per size")
 
-    ap.add_argument("--gpu", action="store_true", help="Enable GPU direct path (torch CUDA)")
-    ap.add_argument("--device", type=int, default=0, help="CUDA device id")
+    ap.add_argument("--gpu", action="store_true", help="Enable AMD GPU path (torch ROCm)")
+    ap.add_argument("--device", type=int, default=0, help="GPU device id")
     ap.add_argument("--gpu-conn", choices=["rdma", "ucx", "both"], default="rdma",
                     help="In GPU mode: which transport(s) to test. Default rdma (safer).")
 

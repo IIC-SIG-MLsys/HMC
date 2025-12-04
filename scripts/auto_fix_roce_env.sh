@@ -8,7 +8,7 @@ set -e
 # sets MTU, and prints GID tables.
 # ================================
 
-MTU="9000"  # Use 1500 for stable tests, 9000 for max performance
+MTU="1500"  # Use 1500 for stable tests, 9000 for max performance
 
 echo "=== [1] Detecting ACTIVE RDMA devices ==="
 found_any=false

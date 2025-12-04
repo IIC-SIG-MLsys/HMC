@@ -4,9 +4,9 @@ perftest for hmc
 ## cpu
 ```
 # server
-python3 perf.py --role server --bind-ip 192.168.2.244 --ctrl-bind-ip 192.168.2.244 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --verify
+python3 perf.py --role server --bind-ip 192.168.2.243 --ctrl-bind-ip 192.168.2.243 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --verify
 # client
-python3 perf.py --role client --server-ip 192.168.2.244 --ctrl-ip 192.168.2.244 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --sizes 64,256,1k,4k,64k,1m,4m,16m,64m
+python3 perf.py --role client --server-ip 192.168.2.243 --ctrl-ip 192.168.2.243 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --sizes 64,256,1k,4k,64k,1m,4m,16m,64m
 ```
 
 ## gpu
@@ -26,3 +26,4 @@ CUDA_VISIBLE_DEVICES=1 python3 perf_rocm.py --role client --server-ip 192.168.2.
 ```
 
 > - ucx传输gpu数据时，小数据会走put short路径导致报错，建议传输大于4K的数据。 
+> - 如果ucx遇到不通问题，指定网卡：export UCX_NET_DEVICES=mlx5_0:1
