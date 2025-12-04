@@ -23,7 +23,7 @@ status_t CudaMemory::allocateBuffer(void **addr, size_t size) {
     return status_t::UNSUPPORT;
   }
 
-  logInfo("Allocate memory using cudaMalloc.");
+  // logInfo("Allocate memory using cudaMalloc.");
   cudaError_t ret = cudaMalloc(addr, size);
   if (ret != cudaSuccess) {
     logError("failed to allocate memory: %s", cudaGetErrorString(ret));

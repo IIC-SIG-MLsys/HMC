@@ -1,7 +1,6 @@
 #include <arpa/inet.h>
 #include <chrono>
-#include <cstdlib>
-#include <cstring>
+#include <cmath>
 #include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
@@ -12,6 +11,9 @@
 #include <thread>
 #include <unistd.h>
 #include <vector>
+
+#include "../src/memories/mem_type.h"
+#include "../src/resource_manager/gpu_interface.h"
 
 using namespace hmc;
 using namespace std;
@@ -24,7 +26,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-const size_t buffer_size = 1024ULL * 1024 * 128; // 128 MB
+const size_t buffer_size = 1024ULL * 1024 * 128;
 const int device_id = 0;
 const int gpu_port = 2025;
 const int cpu_port = 2026;
@@ -47,32 +49,12 @@ struct Context {
   std::mutex *log_mutex;
 };
 
-using steady_clock_t = std::chrono::steady_clock;
-
-#include <cuda_runtime.h>
-#define CUDA_OK(call)                                                          \
-  do {                                                                         \
-    cudaError_t _e = (call);                                                   \
-    if (_e != cudaSuccess) {                                                   \
-      LOG(ERROR) << "CUDA error: " << cudaGetErrorString(_e)                   \
-                 << " @" << __FILE__ << ":" << __LINE__;                      \
-    }                                                                          \
-  } while (0)
-
-static inline void cuda_barrier(int dev) {
-  CUDA_OK(cudaSetDevice(dev));
-  CUDA_OK(cudaGetLastError());
-  CUDA_OK(cudaDeviceSynchronize());
-}
-
-// 环境变量读取
 std::string get_env_or_default(const char *var_name,
                                const std::string &default_val) {
   const char *val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
 
-// ---------- TCP 控制通道 ----------
 int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   int server_fd = socket(AF_INET, SOCK_STREAM, 0);
   if (server_fd == -1) {
@@ -83,9 +65,10 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   int opt = 1;
   setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
 
-  sockaddr_in address;
+  sockaddr_in address{};
   address.sin_family = AF_INET;
   address.sin_port = htons(port);
+
   if (inet_pton(AF_INET, bind_ip.c_str(), &address.sin_addr) <= 0) {
     perror("Invalid bind IP address");
     exit(EXIT_FAILURE);
@@ -102,8 +85,8 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   }
 
   LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":" << port;
-  int addrlen = sizeof(address);
-  int new_socket = accept(server_fd, (struct sockaddr *)&address, (socklen_t *)&addrlen);
+  socklen_t addrlen = sizeof(address);
+  int new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
   if (new_socket < 0) {
     perror("accept failed");
     exit(EXIT_FAILURE);
@@ -129,7 +112,43 @@ bool wait_for_control_message(int socket_fd) {
   return std::string(buffer).find("Finished") != std::string::npos;
 }
 
-// ---------- UCX recv ----------
+void recv_channel_slice_uhm(Context ctx) {
+  size_t flags = 0;
+  if (gpu_comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size,
+                             MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[UHM] Receive failed.";
+  }
+}
+
+void recv_channel_slice_serial(Context ctx) {
+  const size_t chunk_size = buffer_size / 2;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+
+  for (size_t i = 0; i < num_chunks; ++i) {
+    if (!wait_for_control_message(ctrl_socket_fd)) {
+      LOG(ERROR) << "Serial mode: control message timeout.";
+      return;
+    }
+  }
+}
+
+void recv_channel_slice_g2h2g(Context ctx) {
+  const size_t chunk_size = buffer_size / 2;
+  size_t num_chunks = (ctx.size + chunk_size - 1) / chunk_size;
+
+  for (size_t i = 0; i < num_chunks; ++i) {
+    if (!wait_for_control_message(ctrl_socket_fd)) {
+      LOG(ERROR) << "G2H2G mode: control message timeout.";
+      return;
+    }
+  }
+}
+
+void recv_channel_slice_rdma_cpu(Context ctx) {
+  wait_for_control_message(ctrl_socket_fd);
+}
+
 void recv_channel_slice_ucx(Context ctx) {
   if (!wait_for_control_message(ctrl_socket_fd)) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
@@ -143,19 +162,7 @@ void recv_channel_slice_ucx(Context ctx) {
     return;
   }
 
-  cuda_barrier(device_id);
-
-  // H2D：这一步若是 async/或曾经非法，会在 barrier 处暴露，不会拖到 free
   gpu_mem_op->copyHostToDevice(ctx.gpu_data_ptr, ctx.cpu_data_ptr, ctx.size);
-
-  cuda_barrier(device_id);
-
-  LOG(INFO) << "[UCX] recv head=" << std::hex
-            << (int)((unsigned char*)ctx.cpu_data_ptr)[0] << " "
-            << (int)((unsigned char*)ctx.cpu_data_ptr)[1] << " "
-            << (int)((unsigned char*)ctx.cpu_data_ptr)[2] << " "
-            << (int)((unsigned char*)ctx.cpu_data_ptr)[3]
-            << std::dec;
 }
 
 std::string get_mode_from_args(int argc, char *argv[]) {
@@ -184,6 +191,7 @@ int main(int argc, char *argv[]) {
   tcp_server_ip = get_env_or_default("TCP_SERVER_IP", DEFAULT_TCP_IP);
 
   std::mutex log_mutex;
+
   gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
   cpu_buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
 
@@ -193,34 +201,51 @@ int main(int argc, char *argv[]) {
 
   if (mode == "ucx") {
     if (cpu_comm->initServer(server_ip, gpu_port, ConnType::UCX) != status_t::SUCCESS) {
-      LOG(ERROR) << "[Server] UCX initServer failed.";
+      LOG(ERROR) << "Failed to init UCX server.";
       return -1;
     }
   } else {
-    LOG(ERROR) << "This patched server file focuses on UCX mode. Use your original file for other modes.";
-    return -1;
+    if (gpu_comm->initServer(server_ip, gpu_port, ConnType::RDMA) != status_t::SUCCESS ||
+        cpu_comm->initServer(server_ip, cpu_port, ConnType::RDMA) != status_t::SUCCESS) {
+      LOG(ERROR) << "Failed to init RDMA servers.";
+      return -1;
+    }
   }
 
   ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
+
+  void (*recv_func)(Context) = nullptr;
+  if (mode == "serial")
+    recv_func = recv_channel_slice_serial;
+  else if (mode == "g2h2g")
+    recv_func = recv_channel_slice_g2h2g;
+  else if (mode == "rdma_cpu")
+    recv_func = recv_channel_slice_rdma_cpu;
+  else if (mode == "ucx")
+    recv_func = recv_channel_slice_ucx;
+  else
+    recv_func = recv_channel_slice_uhm;
 
   for (int power = 5; power <= 26; ++power) {
     size_t total_size = size_t(1) << power;
     std::vector<uint8_t> host_data(total_size, 0);
 
-    // 关键：每轮开始都把 device 锁死 + 清 error
-    cuda_barrier(device_id);
-
     void *gpu_ptr = nullptr;
-    CUDA_OK(cudaSetDevice(device_id));
     gpu_mem_op->allocateBuffer(&gpu_ptr, total_size);
-    cuda_barrier(device_id);
 
     Context ctx = {host_data.data(), gpu_ptr, total_size, &log_mutex};
-    recv_channel_slice_ucx(ctx);
+    recv_func(ctx);
 
-    // D2H 校验（这一步也可能是 async，所以必须同步）
-    gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
-    cuda_barrier(device_id);
+    if (mode == "rdma_cpu") {
+      gpu_mem_op->freeBuffer(gpu_ptr);
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+      LOG(INFO) << "--------------------------------------------";
+      continue;
+    }
+
+    if (mode != "g2h2g") {
+      gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
+    }
 
     bool valid = true;
     for (size_t i = 0; i < std::min<size_t>(10, total_size); ++i) {
@@ -229,11 +254,7 @@ int main(int argc, char *argv[]) {
 
     LOG(INFO) << "[Size " << total_size << " B] Data Integrity: " << (valid ? "PASS" : "FAIL");
 
-    cuda_barrier(device_id);
-    CUDA_OK(cudaSetDevice(device_id));
     gpu_mem_op->freeBuffer(gpu_ptr);
-    cuda_barrier(device_id);
-
     std::this_thread::sleep_for(std::chrono::seconds(1));
     LOG(INFO) << "--------------------------------------------";
   }
