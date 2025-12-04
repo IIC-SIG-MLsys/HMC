@@ -48,9 +48,6 @@ inline status_t gpuGetDevice(T *dev, int mlu_ordinal = 0) {
   }
   *dev = device;
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
-  return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   int device; // 使用 Runtime API 获取当前设备，注意 T 应该为 int 类型
   musaError_t err = musaGetDevice(&device);
@@ -112,9 +109,6 @@ template <typename T> inline status_t gpuFreeContext(T ctx) {
 #elif defined(ENABLE_MUSA)
   // TODO
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
-  return status_t::UNSUPPORT;
 #else
   return status_t::UNSUPPORT;
 #endif

@@ -31,12 +31,10 @@ elseif(CUDA_FOUND)
     target_link_libraries(${BINARY} PRIVATE ${CUDA_LIBRARIES})
 elseif(NEUWARE_FOUND)
     target_link_libraries(${BINARY} PRIVATE ${NEUWARE_LIBRARIES})
-elseif(HUAWEI_FOUND)
-    target_link_libraries(${BINARY} PRIVATE ${HUAWEI_LIBRARIES})
 elseif(MUSA_FOUND)
     target_link_libraries(${BINARY} PRIVATE ${MUSA_LIBRARIES})  # 直接链接 MUSA 运行时库
 else()
-    message(FATAL_ERROR "ROCm, CUDA, NEUWARE, HUAWEI or MUSA is required but was not found.")
+    message(FATAL_ERROR "ROCm, CUDA, NEUWARE or MUSA is required but was not found.")
 endif()
 
 # 添加包含目录

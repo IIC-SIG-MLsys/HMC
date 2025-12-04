@@ -50,9 +50,6 @@ status_t gpuInit() {
   //   return status_t::ERROR;
   // }
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
-  return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   musaError_t res = musaFree(0);
   if (res != musaSuccess) {
@@ -94,9 +91,6 @@ status_t gpuGetPcieBusId(std::string *bus_id, int device_id) {
   cnDeviceGetPCIBusId(pciBusId, 16, dev);
   *bus_id = std::string(pciBusId);
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
-  return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   char pciBusId[16];
   musaError_t res =
@@ -134,9 +128,6 @@ status_t gpuGetDeviceCount(int *device_count) {
     return status_t::ERROR;
   }
   return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
-  return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   musaError_t res = musaGetDeviceCount(device_count);
   if (res != musaSuccess) {
@@ -171,9 +162,6 @@ status_t gpuGetDeviceMemory(uint64_t *free_size, uint64_t *total_size) {
     logError("failed to get cnMemGetInfo %d.", ret);
     return status_t::ERROR;
   }
-  return status_t::SUCCESS;
-#elif defined(ENABLE_HUAWEI)
-  // TODO
   return status_t::SUCCESS;
 #elif defined(ENABLE_MUSA)
   musaError_t res = musaMemGetInfo(free_size, total_size);

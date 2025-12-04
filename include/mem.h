@@ -34,8 +34,7 @@ enum class MemoryType {
   NVIDIA_GPU,    ///< NVIDIA CUDA GPU memory
   AMD_GPU,       ///< AMD ROCm GPU memory
   CAMBRICON_MLU, ///< Cambricon MLU accelerator memory
-  MOORE_GPU,      ///< Moore Threads GPU memory
-  HUAWEI_ASCEND_NPU
+  MOORE_GPU      ///< Moore Threads GPU memory
 };
 // Future extensions: NVIDIA_GPU_MANAGED, AMD_GPU_MANAGED
 

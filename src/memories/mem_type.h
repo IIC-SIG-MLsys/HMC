@@ -115,28 +115,6 @@ public:
   status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
 };
 
-class HuaweiMemory : public MemoryBase {
-public:
-  HuaweiMemory(int device_id, MemoryType mem_type)
-      : MemoryBase(device_id, mem_type){};
-  ~HuaweiMemory() { this->free(); };
-
-  status_t init();
-  status_t free();
-  status_t allocateBuffer(void **addr, size_t size);
-  status_t allocatePeerableBuffer(void **addr, size_t size);
-  status_t freeBuffer(void *addr);
-
-  status_t copyHostToDevice(void *dest, const void *src, size_t size);
-  status_t copyDeviceToHost(void *dest, const void *src, size_t size);
-  status_t copyDeviceToDevice(void *dest, const void *src, size_t size);
-
-private:
-  // aclrtContext context_; // 上下文 -> TODO: ResourceManager
-  // aclrtStream stream_;   // 流
-  // bool is_initialized_ = false;
-};
-
 class MusaMemory : public MemoryBase {
 public:
   MusaMemory(int device_id, MemoryType mem_type)
