@@ -1,298 +1,465 @@
 # HMC User Guide
 
 **Heterogeneous Memories Communication Framework**
-© 2025 SDU spgroup Holding Limited
 
 ---
 
 ## Overview
 
-**HMC** is a **high-performance GPU communication framework** for heterogeneous computing.
-It performs **GPU-direct data transfer** with **low QP and pinned memory usage**, sustaining **high throughput under limited RDMA resources**.
+**HMC** is a communication framework for heterogeneous systems (CPU/GPU/accelerators). It provides:
+
+* A unified **memory abstraction** (`Memory`, `ConnBuffer`)
+* A unified **transport abstraction** (`Communicator`) with:
+  * **RDMA** backend for device-direct / GPU-direct transfers (platform dependent)
+  * **UCX** backend focused on **RMA read/write** (`writeTo/readFrom`)
+* A lightweight **TCP control channel** (`CtrlSocketManager`) for synchronization and small messages
+
+Core idea:
+
+> All network operations read/write from a local registered buffer (`ConnBuffer`). Transports move bytes between local/remote buffers.
 
 ---
 
-At a **4 MB buffer size**, HMC achieves **significantly higher bandwidth** than CPU-mediated transfers, demonstrating its efficiency in GPU-direct data paths.
+# Part A — C++ (Core Library)
 
-![](./docs/logs/4MB_AMD.png)
-
----
-
-### Features
-
-* Unified memory abstraction for CPU and GPU
-* Support for heterogeneous GPUs, including NVIDIA, AMD, Hygon, Cambricon, and Moore Threads
-* GPU-direct RDMA communication without host staging
-* Efficient copy–transfer overlap for improved pipeline utilization
-* Superior bandwidth scalability with large transfer sizes
-
----
-
-## ⚙️ Build & Installation
+## A1. Build & Installation (C++)
 
 ### Prerequisites
 
-#### System Dependencies
+* C++14 or newer
+* CMake ≥ 3.18
+* glog
 
-* **C++14** compiler or higher
-* **CMake ≥ 3.18**
-* **Glog** (for logging)
+```bash
+sudo apt-get install libgoogle-glog-dev
+```
 
-  ```bash
-  sudo apt-get install libgoogle-glog-dev
-  ```
-* **GTest** (optional, for testing)
+Optional:
 
-  ```bash
-  sudo apt-get install libgtest-dev
-  ```
-* Device-specific drivers and SDKs:
+* GTest
 
-  * **CUDA** (for NVIDIA GPU)
-  * **ROCm** (for AMD/Hygon GPU)
-  * **CNRT / MLU-OP** (for Cambricon MLU)
-  * **MUSA Runtime** (for Moore Threads GPU)
+```bash
+sudo apt-get install libgtest-dev
+```
+
+Platform SDKs (as needed): CUDA / ROCm / CNRT / MUSA / …
 
 ---
 
 ### Build from Source
 
+> You can run `build.sh` to quickly build HMC.
+
 ```bash
-# Clone and enter the repository
 git clone https://github.com/IIC-SIG-MLsys/HMC.git
 cd HMC
 
-# Create build directory
-mkdir build && cd build
-
-# Generate Makefile
-cmake ..
-
-# Compile
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
 make -j
 ```
 
-#### Optional CMake Flags
+Common options:
 
-| Option                  | Description                          |
-| ----------------------- | ------------------------------------ |
-| `-DBUILD_STATIC_LIB=ON` | Build static library (`libhmc.a`)    |
-| `-DBUILD_PYTHON_MOD=ON` | Build Python bindings (via PyBind11) |
+| Option                  | Meaning                                             |
+| ----------------------- | --------------------------------------------------- |
+| `-DBUILD_STATIC_LIB=ON` | Build `libhmc.a`                                    |
+| `-DBUILD_SHARED_LIB=ON` | Build shared library (if supported by your project) |
 
 ---
 
-### Python Package (Optional)
+## A2. C++ Core Concepts
 
-HMC provides a Python interface built with **PyBind11**.
+### `Memory`
 
-```bash
-# Initialize submodules
-git submodule update --init --recursive
+Device-agnostic allocate/copy API:
 
-# Rebuild with Python module enabled
-cmake .. -DBUILD_PYTHON_MOD=ON
-make -j
+* allocate / free
+* Host↔Device, Device↔Device copies
 
-# Build Python wheel
-python -m build
+### `ConnBuffer`
 
-# Install the package
-pip install dist/hmc-*.whl
+Stable, registered buffer used for network transport. All operations are `(bias, size)` within this buffer:
+
+* external → buffer: `writeFromCpu`, `writeFromGpu`
+* buffer → external: `readToCpu`, `readToGpu`
+
+### `Communicator`
+
+Transport manager providing:
+
+* `initServer()` / `connectTo()`
+* RMA: `writeTo()` / `readFrom()` (RDMA/UCX)
+* two-sided helper: `send()` / `recv()`
+* RDMA-oriented UHM: `sendDataTo()` / `recvDataFrom()`
+
+### `CtrlSocketManager`
+
+TCP control path for sync / small messages (int / POD structs).
+
+---
+
+## A3. C++ Examples
+
+### Example 1 — Memory
+
+```cpp
+#include <hmc.h>
+#include <vector>
+using namespace hmc;
+
+int main() {
+  Memory gpu_mem(0, MemoryType::NVIDIA_GPU);
+  void* gpu_ptr = nullptr;
+
+  gpu_mem.allocateBuffer(&gpu_ptr, 1 << 20);
+
+  std::vector<char> host(1 << 20, 'A');
+  gpu_mem.copyHostToDevice(gpu_ptr, host.data(), host.size());
+
+  gpu_mem.freeBuffer(gpu_ptr);
+  return 0;
+}
 ```
 
 ---
 
-## 🚀 Quick Start
+### Example 2 — One-Sided Transfer (Buffered RMA Pattern)
 
-### Example 1 — Basic Memory Management
+#### Server
+
+```cpp
+#include <hmc.h>
+#include <memory>
+using namespace hmc;
+
+int main() {
+  auto buf = std::make_shared<ConnBuffer>(0, 128 * 1024 * 1024, MemoryType::CPU);
+  Communicator comm(buf);
+
+  comm.initServer("192.168.2.244", 2025, ConnType::UCX);
+
+  // Wait for application-level signal, then read from buf->ptr
+  // (e.g. CtrlSocketManager or your own signaling)
+  return 0;
+}
+```
+
+#### Client
+
+```cpp
+#include <hmc.h>
+#include <vector>
+using namespace hmc;
+
+int main() {
+  std::string server_ip = "192.168.2.244";
+
+  auto buf = std::make_shared<ConnBuffer>(0, 128 * 1024 * 1024, MemoryType::CPU);
+  Communicator comm(buf);
+
+  comm.connectTo(server_ip, 2025, ConnType::UCX);
+
+  std::vector<char> payload(4 * 1024 * 1024, 'A');
+  buf->writeFromCpu(payload.data(), payload.size(), 0);
+
+  comm.writeTo(server_ip, 0, payload.size(), ConnType::UCX);
+  return 0;
+}
+```
+
+---
+
+### Example 3 — Control Signaling (TCP)
 
 ```cpp
 #include <hmc.h>
 using namespace hmc;
 
 int main() {
-    Memory gpu_mem(0, MemoryType::NVIDIA_GPU);
-    void* gpu_ptr = nullptr;
+  auto &ctrl = CtrlSocketManager::instance();
 
-    // Allocate 1MB on GPU
-    gpu_mem.allocateBuffer(&gpu_ptr, 1024 * 1024);
+  // Server: ctrl.startServer("192.168.2.244");
+  // Client: ctrl.getCtrlSockFd("192.168.2.244");
 
-    // Copy data from CPU to GPU
-    std::vector<char> host_data(1024 * 1024, 'A');
-    gpu_mem.copyHostToDevice(gpu_ptr, host_data.data(), host_data.size());
-
-    // Free GPU memory
-    gpu_mem.freeBuffer(gpu_ptr);
+  ctrl.sendCtrlInt("192.168.2.244", 1); // "data ready"
+  return 0;
 }
 ```
 
 ---
 
-### Example 2 — RDMA Communication
+## A4. C++ API Reference (Core)
 
-```cpp
-#include <hmc.h>
-using namespace hmc;
+### `Memory`
 
-// Shared RDMA buffer
-auto buffer = std::make_shared<ConnBuffer>(0, 64 * 1024 * 1024);
-Communicator comm(buffer);
+* `allocateBuffer`, `allocatePeerableBuffer`, `freeBuffer`
+* `copyHostToDevice`, `copyDeviceToHost`, `copyDeviceToDevice`
 
-std::string server_ip = "192.168.2.100";
+### `ConnBuffer`
 
-// Client
-comm.connectTo(server_ip, 2025, ConnType::RDMA);
-comm.writeTo(server_ip, 0, 4096);
-comm.disConnect(server_ip, ConnType::RDMA);
+* `writeFromCpu`, `readToCpu`, `writeFromGpu`, `readToGpu`
 
-// Server
-comm.initServer(server_ip, 2025, ConnType::RDMA);
-comm.closeServer();
-```
+### `Communicator`
 
----
+* Server/client: `initServer`, `closeServer`, `connectTo`, `disConnect`, `checkConn`
+* Transfers: `writeTo`, `readFrom`, `send`, `recv`
+* RDMA UHM: `sendDataTo`, `recvDataFrom`
 
-### Example 3 — Control Message Channel
+### `CtrlSocketManager`
 
-```cpp
-#include <hmc.h>
-using namespace hmc;
-
-CtrlSocketManager& ctrl = CtrlSocketManager::instance();
-
-// Start server
-ctrl.startServer("0.0.0.0", 5555);
-
-// Client side
-int sock_fd = ctrl.getCtrlSockFd("192.168.2.100", 5555);
-ctrl.sendCtrlInt("192.168.2.100", 42);
-
-// Receive control integer
-int value;
-ctrl.recvCtrlInt("192.168.2.100", value);
-printf("Received control value: %d\n", value);
-
-// Clean up
-ctrl.closeConnection("192.168.2.100");
-```
+* `startServer`, `stopServer`, `getCtrlSockFd`
+* `sendCtrlInt`, `recvCtrlInt`
+* `sendCtrlStruct`, `recvCtrlStruct`
+* `closeConnection`, `closeAll`
 
 ---
 
-## 🧠 API Reference
+# Part B — Python (SDK / PyBind Layer)
 
-### 1️⃣ Memory Management (`Memory`)
+## B1. Build & Installation (Python)
 
-| Method                                                         | Description                            |
-| -------------------------------------------------------------- | -------------------------------------- |
-| `allocateBuffer(void** addr, size_t size)`                     | Allocate memory on the selected device |
-| `freeBuffer(void* addr)`                                       | Free allocated memory                  |
-| `copyHostToDevice(void* dest, const void* src, size_t size)`   | Copy data from host to device          |
-| `copyDeviceToHost(void* dest, const void* src, size_t size)`   | Copy data from device to host          |
-| `copyDeviceToDevice(void* dest, const void* src, size_t size)` | Copy within same device                |
+> You can run `build_with_python.sh` to quickly build and install HMC.
 
-Supported memory types:
+HMC provides Python bindings via **pybind11**. Build the C++ core first, then build the wheel.
 
-```cpp
-enum class MemoryType {
-  DEFAULT,
-  CPU,
-  NVIDIA_GPU,
-  AMD_GPU,
-  CAMBRICON_MLU,
-  MOORE_GPU
-};
-```
-
----
-
-### 2️⃣ Connection Buffer (`ConnBuffer`)
-
-| Method                                              | Description                      |
-| --------------------------------------------------- | -------------------------------- |
-| `writeFromCpu(void* src, size_t size, size_t bias)` | Write CPU data to buffer         |
-| `readToCpu(void* dest, size_t size, size_t bias)`   | Read buffer data to CPU          |
-| `writeFromGpu(void* src, size_t size, size_t bias)` | Write GPU data into buffer       |
-| `readToGpu(void* dest, size_t size, size_t bias)`   | Read buffer data into GPU memory |
-
----
-
-### 3️⃣ Communicator
-
-The unified RDMA/UCX communication manager.
-
-| Method                                              | Description                |
-| --------------------------------------------------- | -------------------------- |
-| `initServer(ip, port, type)`                        | Initialize RDMA/UCX server |
-| `connectTo(ip, port, type)`                         | Connect to remote endpoint |
-| `writeTo(ip, offset, size, type)`                   | RDMA write data            |
-| `readFrom(ip, offset, size, type)`                  | RDMA read data             |
-| `sendDataTo(ip, buf, size, buf_type, type)`         | Send large data buffer     |
-| `recvDataFrom(ip, buf, size, buf_type, flag, type)` | Receive large data buffer  |
-| `closeServer()`                                     | Stop server                |
-| `disConnect(ip, type)`                              | Disconnect from peer       |
-
----
-
-### 4️⃣ Control Channel (`CtrlSocketManager`)
-
-| Method                        | Description                     |
-| ----------------------------- | ------------------------------- |
-| `startServer(bind_ip, port)`  | Start TCP control server        |
-| `getCtrlSockFd(ip, port)`     | Connect to control server       |
-| `sendCtrlInt(ip, int value)`  | Send integer control message    |
-| `recvCtrlInt(ip, int& value)` | Receive integer control message |
-| `sendCtrlStruct(ip, obj)`     | Send POD structure              |
-| `recvCtrlStruct(ip, obj)`     | Receive POD structure           |
-| `closeConnection(ip)`         | Close connection                |
-| `closeAll()`                  | Close all connections           |
-
----
-
-### 5️⃣ Status Codes
-
-| Enum             | Meaning             |
-| ---------------- | ------------------- |
-| `SUCCESS`        | Operation succeeded |
-| `ERROR`          | General error       |
-| `UNSUPPORT`      | Not supported       |
-| `INVALID_CONFIG` | Configuration error |
-| `TIMEOUT`        | Timeout occurred    |
-| `NOT_FOUND`      | Object not found    |
-
----
-
-## 🧪 Benchmark Example
+### 1) Initialize submodules
 
 ```bash
-# Run RDMA CPU benchmark
-./build/apps/uhm_app/uhm_server --mode uhm
-./build/apps/uhm_app/uhm_client --mode uhm
+git submodule update --init --recursive
 ```
 
-Supported modes:
+### 2) Build with Python module enabled
 
-| Mode       | Description              |
-| ---------- | ------------------------ |
-| `uhm`      | GPU direct RDMA          |
-| `rdma_cpu` | CPU-only RDMA            |
-| `g2h2g`    | GPU → Host → GPU         |
-| `serial`   | Sequential CPU transfers |
+From repo root:
+
+```bash
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_MOD=ON
+make -j
+```
+
+### 3) Build wheel & install
+
+From repo root:
+
+```bash
+python -m build
+pip install dist/hmc-*.whl
+```
+
+Verify:
+
+```bash
+python -c "import hmc; print(hmc)"
+```
+
+Notes:
+
+* If your build uses CUDA/ROCm, ensure the same toolchain is visible when building the wheel.
 
 ---
 
-## 📚 Summary
+## B2. Python Concepts
 
-HMC provides a **unified, modular, and extensible** interface for developers working on heterogeneous systems.
-It abstracts device memory operations, RDMA/UCX networking, and control synchronization under a single C++ API.
+Python wraps the C++ core and typically exposes:
 
-* Simple interface design for CPU/GPU/NPU memory
-* Fast RDMA-based communication
-* Compatible with major accelerator SDKs
-* Optional Python bindings for high-level users
+* `Session` (recommended high-level API)
+* `IOBuffer` (thin wrapper around `ConnBuffer`, rarely needed directly)
+* Enums: `Status`, `MemoryType`, `ConnType`
+
+Supported Python payload types (typical wrapper behavior):
+
+* `bytes`, `bytearray`, `memoryview`
+* NumPy arrays (CPU)
+* PyTorch tensors (CPU, and CUDA for RDMA path)
+
+Key rule stays the same:
+
+> Python calls also stage into HMC’s internal buffer, then perform `writeTo/readFrom` under the hood.
 
 ---
 
+## B3. Python Quick Start (UCX, CPU payloads)
+
+### Server
+
+```python
+import hmc
+
+ip = "192.168.2.244"
+port = 2025
+
+sess = hmc.create_session(
+    device_id=0,
+    buffer_size=128 * 1024 * 1024,
+    mem_type=hmc.MemoryType.CPU,
+    num_chs=1,
+)
+
+sess.init_server(ip, port, conn=hmc.ConnType.UCX)
+print("UCX server ready")
+
+# Example: read 1MB from client into a bytearray
+client_ip = "192.168.2.248"
+dst = bytearray(1024 * 1024)
+sess.get_into(client_ip, dst, conn=hmc.ConnType.UCX, bias=0)
+print(dst[:16])
 ```
-© 2025 SDU spgroup Holding Limited  
-All rights reserved.
+
+### Client
+
+```python
+import hmc
+
+server_ip = "192.168.2.244"
+port = 2025
+
+sess = hmc.create_session(
+    device_id=0,
+    buffer_size=128 * 1024 * 1024,
+    mem_type=hmc.MemoryType.CPU,
+    num_chs=1,
+)
+
+sess.connect(server_ip, port, conn=hmc.ConnType.UCX)
+
+payload = b"hello hmc"
+sess.put(server_ip, payload, conn=hmc.ConnType.UCX, bias=0)
 ```
+
+---
+
+## B4. NumPy (CPU)
+
+### Send NumPy
+
+```python
+import hmc, numpy as np
+
+sess = hmc.create_session(mem_type=hmc.MemoryType.CPU)
+sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.UCX)
+
+x = np.arange(1024, dtype=np.int32)
+sess.put("192.168.2.244", x, conn=hmc.ConnType.UCX)
+```
+
+### Receive into NumPy
+
+```python
+y = np.empty((1024,), dtype=np.int32)
+sess.get_into("192.168.2.244", y, conn=hmc.ConnType.UCX)  # size inferred from y.nbytes
+```
+
+Notes:
+
+* Source arrays are expected contiguous; wrapper may copy if needed.
+* Dest arrays must be writable and contiguous.
+
+---
+
+## B5. PyTorch (CPU)
+
+```python
+import hmc, torch
+
+sess = hmc.create_session(mem_type=hmc.MemoryType.CPU)
+sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.UCX)
+
+t = torch.arange(4096, dtype=torch.int32)  # CPU tensor
+sess.put("192.168.2.244", t, conn=hmc.ConnType.UCX)
+
+out = torch.empty_like(t)
+sess.get_into("192.168.2.244", out, conn=hmc.ConnType.UCX)
+```
+
+---
+
+## B6. PyTorch CUDA (RDMA path)
+
+UCX GPU-direct depends on UCX transport configuration; the common default is:
+
+* **CUDA tensors → RDMA backend**
+
+### Send CUDA tensor (RDMA)
+
+```python
+import hmc, torch
+
+sess = hmc.create_session(mem_type=hmc.MemoryType.DEFAULT)
+sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.RDMA)
+
+t = torch.randn(1024 * 1024, device="cuda")
+sess.put_torch_cuda("192.168.2.244", t, conn=hmc.ConnType.RDMA)
+```
+
+### Receive into CUDA tensor (RDMA)
+
+```python
+recv = torch.empty_like(t)
+sess.get_torch_cuda("192.168.2.244", recv, conn=hmc.ConnType.RDMA)
+```
+
+---
+
+## B7. Python API Reference (Core)
+
+### `create_session(...) -> Session`
+
+Creates internal `IOBuffer + Communicator`.
+
+Common parameters:
+
+* `device_id`
+* `buffer_size`
+* `mem_type`
+* `num_chs`
+
+### `Session.connect(ip, port, conn)`
+
+Client-side connect.
+
+### `Session.init_server(ip, port, conn)`
+
+Server-side listen.
+
+### `Session.put(ip, data, bias=0, conn=ConnType.UCX, size=None)`
+
+Copy `data` into local buffer and `writeTo()` remote.
+
+### `Session.get(ip, size, bias=0, conn=ConnType.UCX) -> bytes`
+
+`readFrom()` remote into local buffer and return bytes.
+
+### `Session.get_into(ip, dest, bias=0, conn=ConnType.UCX, size=None)`
+
+`readFrom()` then copy into `dest`.
+
+### `Session.disconnect(ip, conn)`
+
+Disconnect peer.
+
+### `Session.close_server()`
+
+Stop listener.
+
+---
+
+## Error Handling & Troubleshooting
+
+Common issues:
+
+* **buffer overflow**: `bias + size > buffer_size`
+* **missing connection**: wrong peer `ip` key
+* **backend mismatch**: `ConnType.UCX` vs `ConnType.RDMA`
+* **device limitations**: GPU-direct depends on platform/driver/transport configuration
+
+Best practice:
+
+* Choose `buffer_size` ≥ max payload + max bias.
+* Start with **CPU buffers for UCX** and validate correctness first.
+* Add control signaling if your application needs strict consumption ordering.
+
+---
+
+© 2025 SDU spgroup Holding Limited. All rights reserved.

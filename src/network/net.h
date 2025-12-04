@@ -72,10 +72,9 @@ protected:
 ConnManager runs a server for recv new Conn and create new QP into a new
 Endpoint. It also run active Connect as a Client.
 */
-struct PairHash {
-  std::size_t operator()(const std::pair<std::string, uint16_t> &p) const {
-    return std::hash<std::string>()(p.first) ^
-           (std::hash<uint16_t>()(p.second) << 1);
+struct ConnTypeHash {
+  size_t operator()(const ConnType& t) const noexcept {
+    return static_cast<size_t>(t);
   }
 };
 
@@ -89,7 +88,8 @@ public:
   ConnManager(std::shared_ptr<ConnBuffer> buffer, size_t num_chs);
   // shared ptr 不能在构造函数里面shared from this,需要构造完成后，单独初始化
   status_t initiateServer(std::string ip, uint16_t port, ConnType serverType);
-  status_t stopServer();
+  status_t stopServer(); // stop all
+  status_t stopServer(ConnType t);
 
   // 客户端发起的连接操作
   status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort,
@@ -146,8 +146,9 @@ private:
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex endpoint_map_mutex; // 用于保护对 endpoint_map 的访问
 
-  std::unique_ptr<Server> server;
-  std::thread server_thread; // 用于运行服务器监听循环的线程
+  std::mutex server_mu_;
+  std::unordered_map<ConnType, std::unique_ptr<Server>, ConnTypeHash> servers_;
+  std::unordered_map<ConnType, std::thread, ConnTypeHash> server_threads_;
 };
 
 /* RDMA endpoint的主动断开逻辑 */

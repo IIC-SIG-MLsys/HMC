@@ -12,10 +12,6 @@ Communicator::Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs)
 };
 
 Communicator::~Communicator() {
-  auto &ctrl = hmc::CtrlSocketManager::instance();
-  ctrl.stopServer();
-  ctrl.closeAll();
-
   logDebug("close communicator");
   conn_manager.reset();
   logDebug("finished");
@@ -128,10 +124,10 @@ status_t Communicator::connectTo(std::string ip, uint16_t port,
   }
 
   auto &ctrl = hmc::CtrlSocketManager::instance();
-  int ctrl_fd = ctrl.getCtrlSockFd(ip, port + 1); // 客户端主动连接
+  int ctrl_fd = ctrl.getCtrlSockFd(ip); // 客户端主动连接
   if (ctrl_fd < 0) {
     std::cerr << "[Communicator] Failed to connect control channel to " << ip
-              << ":" << port + 1 << "\n";
+              << ":" << ctrl.port() << "\n";
     return status_t::ERROR;
   }
 
@@ -145,7 +141,7 @@ status_t Communicator::connectTo(std::string ip, uint16_t port,
 status_t Communicator::initServer(std::string ip, uint16_t port,
                                   ConnType serverType) {
   auto &ctrl = hmc::CtrlSocketManager::instance();
-  ctrl.startServer(ip, port + 1);
+  ctrl.startServer(ip); // only first time
   return conn_manager->initiateServer(ip, port, serverType);
 };
 
@@ -156,9 +152,6 @@ status_t Communicator::closeServer() {
 };
 
 status_t Communicator::disConnect(std::string ip, ConnType connType) {
-  auto &ctrl = hmc::CtrlSocketManager::instance();
-  ctrl.closeConnection(ip);
-
   if (checkConn(ip, connType) == status_t::SUCCESS) {
     conn_manager->_removeEndpoint(ip);
   }
@@ -198,7 +191,7 @@ status_t Communicator::checkConn(std::string ip, ConnType connType) {
 /* ConnBuffer */
 ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type)
     : buffer_size(buffer_size) {
-  mem_ops = new Memory(1, mem_type);
+  mem_ops = new Memory(device_id, mem_type);
   mem_ops->allocatePeerableBuffer(&ptr, buffer_size);
 };
 

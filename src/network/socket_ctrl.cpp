@@ -1,4 +1,5 @@
 #include "net.h"
+#include "utils/env.h"
 #include <arpa/inet.h>
 #include <cstring>
 #include <iostream>
@@ -12,7 +13,9 @@ CtrlSocketManager &CtrlSocketManager::instance() {
   return inst;
 }
 
-CtrlSocketManager::CtrlSocketManager() = default;
+CtrlSocketManager::CtrlSocketManager() {
+  default_port_ = env_u16_or_default("HMC_CTRL_PORT", default_port_);
+}
 
 CtrlSocketManager::~CtrlSocketManager() {
   stopServer();
@@ -21,7 +24,7 @@ CtrlSocketManager::~CtrlSocketManager() {
 
 // ================= Server Side =================
 
-bool CtrlSocketManager::startServer(const std::string &bindIp, uint16_t port) {
+bool CtrlSocketManager::startServer(const std::string &bindIp) {
   if (running_)
     return true; // already running
 
@@ -36,7 +39,7 @@ bool CtrlSocketManager::startServer(const std::string &bindIp, uint16_t port) {
 
   sockaddr_in addr{};
   addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
+  addr.sin_port = htons(default_port_);
   if (::inet_pton(AF_INET, bindIp.c_str(), &addr.sin_addr) <= 0) {
     std::cerr << "[CtrlSocketManager] Invalid bind IP " << bindIp << "\n";
     ::close(listen_fd_);
@@ -47,7 +50,7 @@ bool CtrlSocketManager::startServer(const std::string &bindIp, uint16_t port) {
   if (::bind(listen_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) <
       0) {
     if (errno == EADDRINUSE) {
-      std::cerr << "[CtrlSocketManager] Port " << port
+      std::cerr << "[CtrlSocketManager] Port " << default_port_
                 << " already in use, switching to CLIENT mode.\n";
       ::close(listen_fd_);
       listen_fd_ = -1;
@@ -70,7 +73,7 @@ bool CtrlSocketManager::startServer(const std::string &bindIp, uint16_t port) {
   running_ = true;
   is_server_ = true;
   listener_thread_ = std::thread(&CtrlSocketManager::acceptLoop, this);
-  std::cout << "[CtrlSocketManager] Listening on " << bindIp << ":" << port
+  std::cout << "[CtrlSocketManager] Listening on " << bindIp << ":" << port()
             << "\n";
   return true;
 }
@@ -114,7 +117,7 @@ void CtrlSocketManager::acceptLoop() {
 
 // ================= Client Side =================
 
-int CtrlSocketManager::getCtrlSockFd(const std::string &ip, uint16_t port) {
+int CtrlSocketManager::getCtrlSockFd(const std::string &ip) {
   {
     std::unique_lock<std::mutex> lk(mu_);
     auto it = ip_to_fd_.find(ip);
@@ -123,10 +126,10 @@ int CtrlSocketManager::getCtrlSockFd(const std::string &ip, uint16_t port) {
   }
 
   std::unique_lock<std::mutex> lk(mu_);
-  int fd = createSocket(ip, port);
+  int fd = createSocket(ip, default_port_);
   if (fd < 0) {
     std::cerr << "[CtrlSocketManager] Failed to connect to " << ip << ":"
-              << port << std::endl;
+              << default_port_ << std::endl;
     return -1;
   }
   ip_to_fd_[ip] = fd;
@@ -159,7 +162,7 @@ int CtrlSocketManager::createSocket(const std::string &ip, uint16_t port) {
 bool CtrlSocketManager::sendCtrlMsg(const std::string &ip, CtrlMsgType type,
                                     const void *payload, size_t len,
                                     uint16_t flags) {
-  int fd = getCtrlSockFd(ip, default_port_);
+  int fd = getCtrlSockFd(ip);
   if (fd < 0)
     return false;
 
@@ -174,7 +177,7 @@ bool CtrlSocketManager::sendCtrlMsg(const std::string &ip, CtrlMsgType type,
 
 bool CtrlSocketManager::recvCtrlMsg(const std::string &ip, CtrlMsgHeader &hdr,
                                     std::vector<uint8_t> &payload) {
-  int fd = getCtrlSockFd(ip, default_port_);
+  int fd = getCtrlSockFd(ip);
   if (fd < 0)
     return false;
 

@@ -36,7 +36,6 @@ PYBIND11_MODULE(hmc, m) {
       .value("NVIDIA_GPU", hmc::MemoryType::NVIDIA_GPU)
       .value("AMD_GPU", hmc::MemoryType::AMD_GPU)
       .value("CAMBRICON_MLU", hmc::MemoryType::CAMBRICON_MLU)
-      .value("HUAWEI_ASCEND_NPU", hmc::MemoryType::HUAWEI_ASCEND_NPU)
       .value("MOORE_GPU", hmc::MemoryType::MOORE_GPU)
       .export_values();
 
@@ -50,7 +49,6 @@ PYBIND11_MODULE(hmc, m) {
       .def("copyHostToDevice", &hmc::Memory::copyHostToDevice)
       .def("copyDeviceToHost", &hmc::Memory::copyDeviceToHost)
       .def("copyDeviceToDevice", &hmc::Memory::copyDeviceToDevice)
-      // 修改 allocateBuffer：分配内存后封装为 PyBufferWrapper 对象返回
       .def(
           "allocateBuffer",
           [](hmc::Memory &self, size_t size) {
@@ -58,14 +56,11 @@ PYBIND11_MODULE(hmc, m) {
             auto status = self.allocateBuffer(&ptr, size);
             if (status != hmc::status_t::SUCCESS)
               return py::make_tuple(status, py::none());
-            // 注意：此处要求 Memory 对象 self
-            // 必须在返回的缓冲区对象生命周期内保持有效
             auto buffer_wrapper = new PyBufferWrapper(
                 ptr, size, [&self](void *p) { self.freeBuffer(p); });
             return py::make_tuple(status, py::cast(buffer_wrapper));
           },
           py::arg("size"))
-      // 同理，修改 allocatePeerableBuffer
       .def(
           "allocatePeerableBuffer",
           [](hmc::Memory &self, size_t size) {

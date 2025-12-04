@@ -28,37 +28,84 @@ ConnManager::ConnManager(std::shared_ptr<ConnBuffer> buffer, size_t num_chs) : b
 status_t ConnManager::initiateServer(std::string ip, uint16_t port,
                                      ConnType serverType) {
   auto conn_manager_shared = shared_from_this();
+  
+  std::unique_lock<std::mutex> lk(server_mu_);
 
-  // 使用工厂方法创建 Server 实例
-  server = createServer(serverType, buffer, conn_manager_shared, num_chs_);
+  auto it = servers_.find(serverType);
+  if (it != servers_.end()) {
+    // already
+    return status_t::SUCCESS;
+  }
 
-  // 启动一个新的线程运行服务器的监听循环
-  server_thread = std::thread([this, ip = std::move(ip), port]() mutable {
+  auto s = createServer(serverType, buffer, conn_manager_shared, num_chs_);
+  servers_[serverType] = std::move(s);
+
+  server_threads_[serverType] = std::thread([this, ip, port, serverType]() mutable {
     try {
-      this->server->listen(ip, port);
-    } catch (const std::exception &e) {
-      // 处理异常，例如记录错误日志等
-      logError("Server listen error: %s", e.what());
+      Server* srv = nullptr;
+      {
+        std::unique_lock<std::mutex> lk2(server_mu_);
+        auto it2 = servers_.find(serverType);
+        if (it2 != servers_.end()) srv = it2->second.get();
+      }
+      if (!srv) return;
+      srv->listen(ip, port);
+    } catch (const std::exception& e) {
+      logError("Server listen error (%d): %s", (int)serverType, e.what());
+    } catch (...) {
+      logError("Server listen error (%d): unknown exception", (int)serverType);
     }
   });
 
-  std::this_thread::sleep_for(
-      std::chrono::milliseconds(1000)); // we should wait for server start
+  lk.unlock();
 
+  std::this_thread::sleep_for(std::chrono::milliseconds(200));
   return status_t::SUCCESS;
-};
+}
 
 status_t ConnManager::stopServer() {
-  if (server) {
-    server->stopListen();
-    // 等待 server thread 退出
-    if (server_thread.joinable()) {
-      server_thread.join();
-    }
+  std::unordered_map<ConnType, std::unique_ptr<Server>, ConnTypeHash> servers_copy;
+  std::unordered_map<ConnType, std::thread, ConnTypeHash> threads_copy;
+
+  {
+    std::unique_lock<std::mutex> lk(server_mu_);
+    servers_copy.swap(servers_);
+    threads_copy.swap(server_threads_);
+  }
+
+  for (auto& kv : servers_copy) {
+    if (kv.second) kv.second->stopListen();
+  }
+
+  for (auto& kv : threads_copy) {
+    if (kv.second.joinable()) kv.second.join();
   }
 
   return status_t::SUCCESS;
-};
+}
+
+status_t ConnManager::stopServer(ConnType t) {
+  std::unique_ptr<Server> srv;
+  std::thread th;
+
+  {
+    std::unique_lock<std::mutex> lk(server_mu_);
+    auto itS = servers_.find(t);
+    if (itS != servers_.end()) {
+      srv = std::move(itS->second);
+      servers_.erase(itS);
+    }
+    auto itT = server_threads_.find(t);
+    if (itT != server_threads_.end()) {
+      th = std::move(itT->second);
+      server_threads_.erase(itT);
+    }
+  }
+
+  if (srv) srv->stopListen();
+  if (th.joinable()) th.join();
+  return status_t::SUCCESS;
+}
 
 status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
                                                  uint16_t targetPort,
@@ -131,9 +178,7 @@ void ConnManager::_removeEndpoint(std::string ip) {
 }
 
 ConnManager::~ConnManager() {
-  if (server_thread.joinable()) {
-    server_thread.join(); // 确保线程正确结束
-  }
+  stopServer();
 }
 
 } // namespace hmc

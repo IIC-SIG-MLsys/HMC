@@ -126,6 +126,8 @@ class CtrlSocketManager {
 public:
   static CtrlSocketManager &instance();
 
+  static uint16_t port() { return instance().default_port_; };
+
   CtrlSocketManager(const CtrlSocketManager &) = delete;
   CtrlSocketManager &operator=(const CtrlSocketManager &) = delete;
 
@@ -133,11 +135,11 @@ public:
   bool isServer() const { return is_server_; }
 
   // ----- Server -----
-  bool startServer(const std::string &bindIp, uint16_t port);
+  bool startServer(const std::string &bindIp);
   void stopServer();
 
   // ----- Client -----
-  int getCtrlSockFd(const std::string &ip, uint16_t port);
+  int getCtrlSockFd(const std::string &ip);
 
   // ----- Message APIs -----
   bool sendCtrlMsg(const std::string &ip, CtrlMsgType type, const void *payload,
@@ -216,18 +218,20 @@ private:
 public:
   explicit Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs = 1);
 
-  // --- Core RDMA Operations ---
+  // --- Core Operations ---
+  // single side write/read
   status_t writeTo(std::string ip, size_t ptr_bias, size_t size,
                    ConnType connType = ConnType::RDMA);
   status_t readFrom(std::string ip, size_t ptr_bias, size_t size,
                     ConnType connType = ConnType::RDMA);
 
+  // double side send/recv by write
   status_t send(std::string ip, size_t ptr_bias, size_t size,
                 ConnType connType = ConnType::RDMA);
   status_t recv(std::string ip, size_t ptr_bias, size_t size,
                 ConnType connType = ConnType::RDMA); ///< Blocking receive
 
-  // --- High-level Data APIs (for UHM / large buffers) ---
+  // --- High-level Data APIs (UHM interface, only RDMA) ---
   status_t sendDataTo(std::string ip, void *send_buf, size_t buf_size,
                       MemoryType buf_type, ConnType connType = ConnType::RDMA);
 
