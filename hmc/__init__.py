@@ -46,32 +46,21 @@ class ConnType(IntEnum):
         return cls(int(x))
 
 
-def _enum_int(x: Any) -> int:
-    return int(getattr(x, "value", x))
+class CtrlTransport(IntEnum):
+    TCP = int(_core.CtrlTransport.TCP)
+    UDS = int(_core.CtrlTransport.UDS)
+
+    @classmethod
+    def _from_core(cls, x: Any) -> "CtrlTransport":
+        return cls(int(x))
 
 
-def _to_core_memory_type(x: Any) -> _core.MemoryType:
-    if isinstance(x, _core.MemoryType):
-        return x
-    try:
-        return _core.MemoryType(_enum_int(x))
-    except Exception as e:
-        raise TypeError(f"Invalid MemoryType: {x!r}") from e
-
-
-def _to_core_conn_type(x: Any) -> _core.ConnType:
-    if isinstance(x, _core.ConnType):
-        return x
-    try:
-        return _core.ConnType(_enum_int(x))
-    except Exception as e:
-        raise TypeError(f"Invalid ConnType: {x!r}") from e
-
-
+# Pybind-exposed types
 Memory = _core.Memory
 ConnBuffer = _core.ConnBuffer
 Communicator = _core.Communicator
 Buffer = _core.Buffer
+CtrlLink = _core.CtrlLink
 
 memory_supported = _core.memory_supported
 
@@ -86,6 +75,40 @@ class HMCStatusError(HMCError):
         self.status = st
 
 
+def _enum_int(x: Any) -> int:
+    return int(getattr(x, "value", x))
+
+
+def _to_core_memory_type(x: Any) -> Any:
+    if isinstance(x, _core.MemoryType):
+        return x
+    if isinstance(x, MemoryType):
+        return _core.MemoryType(int(x))
+    try:
+        return _core.MemoryType(_enum_int(x))
+    except Exception as e:
+        raise TypeError(f"Invalid MemoryType: {x!r}") from e
+
+
+def _to_core_conn_type(x: Any) -> Any:
+    if isinstance(x, _core.ConnType):
+        return x
+    if isinstance(x, ConnType):
+        return _core.ConnType(int(x))
+    try:
+        return _core.ConnType(_enum_int(x))
+    except Exception as e:
+        raise TypeError(f"Invalid ConnType: {x!r}") from e
+
+
+def _to_core_ctrl_transport(x: Any) -> Any:
+    if isinstance(x, _core.CtrlTransport):
+        return x
+    if isinstance(x, CtrlTransport):
+        return _core.CtrlTransport(int(x))
+    return _core.CtrlTransport(_enum_int(x))
+
+
 def _ok(st: Any) -> bool:
     return int(st) == int(status_t.SUCCESS)
 
@@ -98,7 +121,6 @@ def _ensure_ok(st: Any, msg: str):
 def _try_import_numpy():
     try:
         import numpy as np  # type: ignore
-
         return np
     except Exception:
         return None
@@ -107,7 +129,6 @@ def _try_import_numpy():
 def _try_import_torch():
     try:
         import torch  # type: ignore
-
         return torch
     except Exception:
         return None
@@ -233,7 +254,6 @@ class IOBuffer:
                 st = self.core.readToCpu(tmp, int(nbytes), int(offset))
                 _ensure_ok(st, "ConnBuffer.readToCpu failed")
                 import torch as _torch  # type: ignore
-
                 dst.view(_torch.uint8)[: int(nbytes)].copy_(
                     _torch.frombuffer(tmp, dtype=_torch.uint8)[: int(nbytes)]
                 )
@@ -320,61 +340,236 @@ class IOBuffer:
         self.buffer_get_cpu_into(dst, nbytes=int(nbytes), offset=int(offset))
 
 
+def _env_str(name: str, default: str) -> str:
+    import os
+    v = os.getenv(name)
+    return v if v else default
+
+
+def _normalize_ip(s: str) -> str:
+    return str(s).strip()
+
+
+def _pick_ctrl_transport(local_ip: str, peer_ip: str) -> CtrlTransport:
+    t = _env_str("CTRL_TRANSPORT", "").strip().lower()
+    if t:
+        return CtrlTransport.UDS if t == "uds" else CtrlTransport.TCP
+
+    li = _normalize_ip(local_ip)
+    pi = _normalize_ip(peer_ip)
+    if li and li != "0.0.0.0" and pi and (li == pi):
+        return CtrlTransport.UDS
+    return CtrlTransport.TCP
+
+
+def _build_ctrl_link(
+    *,
+    transport: CtrlTransport,
+    peer_rank: int,
+    tcp_ip: str,
+    tcp_port: int,
+    uds_dir: str,
+) -> Any:
+    """
+    CtrlLink.UDS needs a FULL PATH to peer's UDS file, not the directory.
+    """
+    link = CtrlLink()
+    if transport == CtrlTransport.UDS:
+        link.transport = _core.CtrlTransport.UDS
+        link.uds_path = Communicator.udsPathFor(str(uds_dir), int(peer_rank))
+        link.ip = ""
+        link.port = 0
+    else:
+        link.transport = _core.CtrlTransport.TCP
+        link.ip = str(tcp_ip)
+        link.port = int(tcp_port)
+        link.uds_path = ""
+    return link
+
+
+def _require_port(port: Any) -> int:
+    try:
+        p = int(port)
+    except Exception as e:
+        raise TypeError(f"port must be int-like, got {port!r}") from e
+    if not (0 < p < 65536):
+        raise ValueError(f"port out of range: {p}")
+    return p
+
+
 class Session:
-    def __init__(self, buf: IOBuffer, num_chs: int = 1):
+    """
+    - init_server(bind_ip=...): bring up data-plane + ctrl (TCP and/or UDS)
+    - connect(peer_ip=...): auto-pick ctrl UDS/TCP by comparing local_ip vs peer_ip (or env override)
+    """
+
+    def __init__(self, buf: IOBuffer, num_chs: int = 1, *, local_ip: str = "", ctrl_uds_dir: str = "/tmp"):
         self.buf = buf
         self.comm = Communicator(self.buf.core, int(num_chs))
+        self.local_ip: str = _normalize_ip(local_ip)
+        self.ctrl_uds_dir: str = str(ctrl_uds_dir)
+        self.id = None  # rank / CtrlId
 
-    def connect(self, ip: str, port: int, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.connectTo(ip, int(port), _to_core_conn_type(conn)), "Communicator.connectTo failed")
+    def set_local_ip(self, ip: str) -> None:
+        self.local_ip = _normalize_ip(ip)
 
-    def init_server(self, ip: str, port: int, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.initServer(ip, int(port), _to_core_conn_type(conn)), "Communicator.initServer failed")
+    def set_ctrl_uds_dir(self, d: str) -> None:
+        self.ctrl_uds_dir = str(d)
+
+    def init_server(
+        self,
+        *,
+        bind_ip: str,
+        ucx_port: int,
+        rdma_port: int,
+        ctrl_tcp_port: int,
+        self_id: int,
+        ctrl_uds_dir: Optional[str] = None,
+    ) -> None:
+        bind_ip = _normalize_ip(bind_ip)
+        uds_dir = self.ctrl_uds_dir if ctrl_uds_dir is None else str(ctrl_uds_dir)
+        self.ctrl_uds_dir = uds_dir
+        self.id = self_id
+
+        uds_path = Communicator.udsPathFor(str(uds_dir), int(self_id))
+
+        _ensure_ok(
+            self.comm.initServer(
+                str(bind_ip),
+                int(rdma_port),
+                int(ctrl_tcp_port),
+                str(uds_path),
+                _to_core_conn_type(ConnType.RDMA),
+            ),
+            "Communicator.initServer RDMA failed",
+        )
+        _ensure_ok(
+            self.comm.initServer(
+                str(bind_ip),
+                int(ucx_port),
+                int(ctrl_tcp_port),
+                str(uds_path),
+                _to_core_conn_type(ConnType.UCX),
+            ),
+            "Communicator.initServer UCX failed",
+        )
+
+        self.local_ip = bind_ip
 
     def close_server(self) -> None:
         _ensure_ok(self.comm.closeServer(), "Communicator.closeServer failed")
 
-    def disconnect(self, ip: str, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.disConnect(ip, _to_core_conn_type(conn)), "Communicator.disConnect failed")
+    def connect(
+        self,
+        *,
+        peer_id: int,
+        self_id: int,
+        peer_ip: str,
+        data_port: int,
+        ctrl_tcp_port: int,
+        uds_dir: Optional[str] = None,
+        conn: ConnType = ConnType.RDMA,
+    ) -> None:
+        peer_ip = _normalize_ip(peer_ip)
+        data_port = _require_port(data_port)
 
-    def check_conn(self, ip: str, conn: ConnType = ConnType.RDMA) -> None:
-        _ensure_ok(self.comm.checkConn(ip, _to_core_conn_type(conn)), "Communicator.checkConn failed")
+        # If already connected for that (ip,port), skip
+        if self.check_conn(peer_ip, data_port, conn):
+            return
 
-    def put_remote(self, ip: str, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> None:
+        transport = _pick_ctrl_transport(self.local_ip, peer_ip)
+        use_dir = self.ctrl_uds_dir if uds_dir is None else str(uds_dir)
+
+        ctrl_link = _build_ctrl_link(
+            transport=transport,
+            peer_rank=int(peer_id),
+            tcp_ip=str(peer_ip),
+            tcp_port=int(ctrl_tcp_port),
+            uds_dir=str(use_dir),
+        )
+
         _ensure_ok(
-            self.comm.put(ip, int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
+            self.comm.connectTo(
+                int(peer_id),
+                int(self_id),
+                str(peer_ip),
+                int(data_port),
+                ctrl_link,
+                _to_core_conn_type(conn),
+            ),
+            "Communicator.connectTo failed",
+        )
+
+    # ---- updated: ip + port indexed ----
+    def disconnect(self, ip: str, port: int, conn: ConnType = ConnType.RDMA) -> None:
+        p = _require_port(port)
+        _ensure_ok(
+            self.comm.disConnect(str(ip), int(p), _to_core_conn_type(conn)),
+            "Communicator.disConnect failed",
+        )
+
+    def check_conn(self, ip: str, port: int, conn: ConnType = ConnType.RDMA) -> bool:
+        p = _require_port(port)
+        st = self.comm.checkConn(str(ip), int(p), _to_core_conn_type(conn))
+        return int(st) == int(status_t.SUCCESS)
+
+    def put_remote(
+        self,
+        ip: str,
+        port: int,
+        local_off: int,
+        remote_off: int,
+        nbytes: int,
+        conn: ConnType = ConnType.RDMA,
+    ) -> None:
+        p = _require_port(port)
+        _ensure_ok(
+            self.comm.put(str(ip), int(p), int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
             "Communicator.put failed",
         )
 
-    def get_remote(self, ip: str, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> None:
+    def get_remote(
+        self,
+        ip: str,
+        port: int,
+        local_off: int,
+        remote_off: int,
+        nbytes: int,
+        conn: ConnType = ConnType.RDMA,
+    ) -> None:
+        p = _require_port(port)
         _ensure_ok(
-            self.comm.get(ip, int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
+            self.comm.get(str(ip), int(p), int(local_off), int(remote_off), int(nbytes), _to_core_conn_type(conn)),
             "Communicator.get failed",
         )
 
-    def put_nb(
-        self,
-        ip: str,
-        local_off: int,
-        remote_off: int,
-        nbytes: int,
-        conn: ConnType = ConnType.RDMA,
-    ) -> int:
+    def put_nb(self, ip: str, port: int, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> int:
+        p = _require_port(port)
         wr_id_box = [0]
-        st = self.comm.putNB(ip, int(local_off), int(remote_off), int(nbytes), wr_id_box, _to_core_conn_type(conn))
+        st = self.comm.putNB(
+            str(ip),
+            int(p),
+            int(local_off),
+            int(remote_off),
+            int(nbytes),
+            wr_id_box,
+            _to_core_conn_type(conn),
+        )
         _ensure_ok(st, "Communicator.putNB failed")
         return int(wr_id_box[0])
 
-    def get_nb(
-        self,
-        ip: str,
-        local_off: int,
-        remote_off: int,
-        nbytes: int,
-        conn: ConnType = ConnType.RDMA,
-    ) -> int:
+    def get_nb(self, ip: str, port: int, local_off: int, remote_off: int, nbytes: int, conn: ConnType = ConnType.RDMA) -> int:
+        p = _require_port(port)
         wr_id_box = [0]
-        st = self.comm.getNB(ip, int(local_off), int(remote_off), int(nbytes), wr_id_box, _to_core_conn_type(conn))
+        st = self.comm.getNB(
+            str(ip),
+            int(p),
+            int(local_off),
+            int(remote_off),
+            int(nbytes),
+            wr_id_box,
+            _to_core_conn_type(conn),
+        )
         _ensure_ok(st, "Communicator.getNB failed")
         return int(wr_id_box[0])
 
@@ -384,17 +579,18 @@ class Session:
         else:
             _ensure_ok(self.comm.wait(int(wr_id)), "Communicator.wait(wr_id) failed")
 
-    def ctrl_send(self, ip: str, tag: int) -> None:
-        _ensure_ok(self.comm.ctrlSend(ip, int(tag)), "Communicator.ctrlSend failed")
+    def ctrl_send(self, peer: int, tag: int) -> None:
+        _ensure_ok(self.comm.ctrlSend(int(peer), int(tag)), "Communicator.ctrlSend failed")
 
-    def ctrl_recv(self, ip: str) -> int:
-        st, tag = self.comm.ctrlRecv(ip)
+    def ctrl_recv(self, peer: int) -> int:
+        st, tag = self.comm.ctrlRecv(int(peer))
         _ensure_ok(st, "Communicator.ctrlRecv failed")
         return int(tag)
 
     def buffer_put_then_put(
         self,
         ip: str,
+        port: int,
         data: Any,
         *,
         local_off: int = 0,
@@ -404,12 +600,13 @@ class Session:
         device: DeviceHint = None,
     ) -> int:
         n = self.buf.put(data, nbytes=nbytes, offset=local_off, device=device)
-        self.put_remote(ip, local_off=local_off, remote_off=remote_off, nbytes=n, conn=conn)
+        self.put_remote(ip, port, local_off=local_off, remote_off=remote_off, nbytes=n, conn=conn)
         return n
 
     def get_then_buffer_get_into(
         self,
         ip: str,
+        port: int,
         dst: Any,
         *,
         local_off: int = 0,
@@ -426,19 +623,51 @@ class Session:
             else:
                 nbytes = len(_to_memoryview(dst).cast("B"))
 
-        self.get_remote(ip, local_off=local_off, remote_off=remote_off, nbytes=int(nbytes), conn=conn)
+        self.get_remote(ip, port, local_off=local_off, remote_off=remote_off, nbytes=int(nbytes), conn=conn)
         self.buf.get_into(dst, nbytes=int(nbytes), offset=local_off, device=device)
         return int(nbytes)
 
-    def send_data_to(self, ip: str, send_buf_ptr: int, buf_size: int, buf_type: MemoryType, conn: ConnType = ConnType.RDMA) -> None:
+    # ---- high-level RDMA-only: updated sendDataTo requires port; recvDataFrom stays ip-only ----
+    def send_data_to(
+        self,
+        ip: str,
+        port: int,
+        send_buf_ptr: int,
+        buf_size: int,
+        buf_type: MemoryType,
+        conn: ConnType = ConnType.RDMA,
+    ) -> None:
+        p = _require_port(port)
         _ensure_ok(
-            self.comm.sendDataTo(ip, int(send_buf_ptr), int(buf_size), _to_core_memory_type(buf_type), _to_core_conn_type(conn)),
+            self.comm.sendDataTo(
+                str(ip),
+                int(p),
+                int(send_buf_ptr),
+                int(buf_size),
+                _to_core_memory_type(buf_type),
+                _to_core_conn_type(conn),
+            ),
             "Communicator.sendDataTo failed",
         )
 
-    def recv_data_from(self, ip: str, recv_buf_ptr: int, buf_size: int, buf_type: MemoryType, flag_ptr: int, conn: ConnType = ConnType.RDMA) -> None:
+    def recv_data_from(
+        self,
+        ip: str,
+        recv_buf_ptr: int,
+        buf_size: int,
+        buf_type: MemoryType,
+        flag_ptr: int,
+        conn: ConnType = ConnType.RDMA,
+    ) -> None:
         _ensure_ok(
-            self.comm.recvDataFrom(ip, int(recv_buf_ptr), int(buf_size), _to_core_memory_type(buf_type), int(flag_ptr), _to_core_conn_type(conn)),
+            self.comm.recvDataFrom(
+                str(ip),
+                int(recv_buf_ptr),
+                int(buf_size),
+                _to_core_memory_type(buf_type),
+                int(flag_ptr),
+                _to_core_conn_type(conn),
+            ),
             "Communicator.recvDataFrom failed",
         )
 
@@ -449,15 +678,17 @@ def create_session(
     buffer_size: int = 128 * 1024 * 1024,
     mem_type: MemoryType = MemoryType.CPU,
     num_chs: int = 1,
+    local_ip: str = "",
 ) -> Session:
     buf = IOBuffer.create(device_id=device_id, buffer_size=buffer_size, mem_type=mem_type)
-    return Session(buf, num_chs=num_chs)
+    return Session(buf, num_chs=num_chs, local_ip=local_ip)
 
 
 __all__ = [
     "status_t",
     "MemoryType",
     "ConnType",
+    "CtrlTransport",
     "Memory",
     "ConnBuffer",
     "Communicator",
@@ -470,9 +701,10 @@ __all__ = [
     "create_session",
 ]
 
-from .collective import Group, init_group
+from .collective import Group, init_group, alltoall  # noqa: E402
 
 __all__ += [
     "Group",
     "init_group",
+    "alltoall",
 ]

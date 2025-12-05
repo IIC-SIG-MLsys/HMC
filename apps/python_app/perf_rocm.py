@@ -104,8 +104,9 @@ def _accept_ctrl(ctrl_bind_ip: str, ctrl_port: int) -> Tuple[socket.socket, Tupl
 
 
 def _torch_gpu_ptr(t) -> int:
+    # NOTE: ROCm torch 也会走 is_cuda True（device 仍然是 cuda:X）
     if not getattr(t, "is_cuda", False):
-        raise ValueError("tensor is not on GPU (torch cuda/rocm)")
+        raise ValueError("tensor is not on GPU (torch ROCm/CUDA)")
     if not t.is_contiguous():
         t = t.contiguous()
     return int(t.data_ptr())
@@ -118,39 +119,58 @@ def _ensure_gpu_tensor(torch, device: int, need_bytes: int, buf):
 
 
 def run_server(
+    *,
     bind_ip: str,
+    local_ip: str,
     ucx_port: int,
     rdma_port: int,
     ctrl_bind_ip: str,
     ctrl_port: int,
+    ctrl_tcp_port: int,
+    ctrl_uds_dir: str,
     buffer_size: int,
     verify: bool,
     gpu: bool,
     device: int,
+    self_rank: int,
 ) -> None:
     torch = _try_import_torch()
     if gpu and torch is None:
         raise SystemExit("GPU mode requires torch (ROCm)")
 
     mem_type = hmc.MemoryType.AMD_GPU if gpu else hmc.MemoryType.CPU
-    sess = hmc.create_session(device_id=device, buffer_size=buffer_size, mem_type=mem_type, num_chs=1)
+    sess = hmc.create_session(
+        device_id=device,
+        buffer_size=buffer_size,
+        mem_type=mem_type,
+        num_chs=1,
+        local_ip=str(local_ip),
+    )
+    if hasattr(sess, "set_ctrl_uds_dir"):
+        sess.set_ctrl_uds_dir(str(ctrl_uds_dir))  # type: ignore[attr-defined]
 
-    sess.init_server(bind_ip, ucx_port, conn=hmc.ConnType.UCX)
-    sess.init_server(bind_ip, rdma_port, conn=hmc.ConnType.RDMA)
+    # NEW: one init_server starts BOTH backends + ctrl(TCP+UDS)
+    sess.init_server(
+        bind_ip=str(bind_ip),
+        ucx_port=int(ucx_port),
+        rdma_port=int(rdma_port),
+        ctrl_tcp_port=int(ctrl_tcp_port),
+        self_id=int(self_rank),
+        ctrl_uds_dir=str(ctrl_uds_dir),
+    )
 
     s, addr, conn = _accept_ctrl(ctrl_bind_ip, ctrl_port)
 
     print(f"[server] UCX  listening on {bind_ip}:{ucx_port}")
     print(f"[server] RDMA listening on {bind_ip}:{rdma_port}")
-    print(f"[server] CTRL listening on {ctrl_bind_ip}:{ctrl_port}")
-    print(f"[server] CTRL accepted from {addr[0]}:{addr[1]}")
+    print(f"[server] CTRL(perf) listening on {ctrl_bind_ip}:{ctrl_port}  accepted {addr[0]}:{addr[1]}")
+    print(f"[server] HMC ctrl tcp={local_ip}:{ctrl_tcp_port} uds_dir={ctrl_uds_dir} self_rank={self_rank}")
 
     current_mode: Optional[str] = None
     current_conn: Optional[hmc.ConnType] = None
 
     head_cpu = bytearray(64)
     head_gpu = None
-
     last_done_seq: int = 0
 
     try:
@@ -250,11 +270,15 @@ def run_server(
 
 
 def run_client(
+    *,
     server_ip: str,
+    local_ip: str,
     ucx_port: int,
     rdma_port: int,
     ctrl_ip: str,
     ctrl_port: int,
+    ctrl_tcp_port: int,
+    ctrl_uds_dir: str,
     buffer_size: int,
     sizes: List[int],
     iters: int,
@@ -262,13 +286,23 @@ def run_client(
     gpu: bool,
     device: int,
     gpu_conn: str,
+    self_rank: int,
+    peer_rank: int,
 ) -> List[Result]:
     torch = _try_import_torch()
     if gpu and torch is None:
         raise SystemExit("GPU mode requires torch (ROCm)")
 
     mem_type = hmc.MemoryType.AMD_GPU if gpu else hmc.MemoryType.CPU
-    sess = hmc.create_session(device_id=device, buffer_size=buffer_size, mem_type=mem_type, num_chs=1)
+    sess = hmc.create_session(
+        device_id=device,
+        buffer_size=buffer_size,
+        mem_type=mem_type,
+        num_chs=1,
+        local_ip=str(local_ip),
+    )
+    if hasattr(sess, "set_ctrl_uds_dir"):
+        sess.set_ctrl_uds_dir(str(ctrl_uds_dir))  # type: ignore[attr-defined]
 
     ctrl = socket.create_connection((ctrl_ip, ctrl_port))
     ctrl.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
@@ -276,19 +310,16 @@ def run_client(
 
     results: List[Result] = []
 
-    all_cases: List[Tuple[str, hmc.ConnType, int]] = [
-        ("rdma", hmc.ConnType.RDMA, rdma_port),
-        ("ucx", hmc.ConnType.UCX, ucx_port),
+    cases: List[Tuple[str, hmc.ConnType, int]] = [
+        ("rdma", hmc.ConnType.RDMA, int(rdma_port)),
+        ("ucx", hmc.ConnType.UCX, int(ucx_port)),
     ]
     if gpu:
         if gpu_conn == "rdma":
-            cases = [c for c in all_cases if c[0] == "rdma"]
+            cases = [c for c in cases if c[0] == "rdma"]
         elif gpu_conn == "ucx":
-            cases = [c for c in all_cases if c[0] == "ucx"]
-        else:
-            cases = all_cases
-    else:
-        cases = all_cases
+            cases = [c for c in cases if c[0] == "ucx"]
+        # else "both" -> keep all
 
     payload = b""
     payload_size = 0
@@ -300,7 +331,16 @@ def run_client(
     done_seq = 0
 
     for conn_name, conn_type, port in cases:
-        sess.connect(server_ip, port, conn=conn_type)
+        # NEW: connect with ranks + ctrl port/uds dir
+        sess.connect(
+            peer_id=int(peer_rank),
+            self_id=int(self_rank),
+            peer_ip=str(server_ip),
+            data_port=int(port),
+            ctrl_tcp_port=int(ctrl_tcp_port),
+            uds_dir=str(ctrl_uds_dir),
+            conn=conn_type,
+        )
 
         ctrl_send_msg(ctrl, f"MODE {conn_name}".encode())
         ack = ctrl_recv_msg(ctrl)
@@ -329,7 +369,8 @@ def run_client(
                 else:
                     sess.buf.buffer_put_gpu_ptr(gpu_ptr, nbytes=sz, offset=0)
 
-                sess.put_remote(server_ip, local_off=0, remote_off=0, nbytes=sz, conn=conn_type)
+                # UPDATED: put_remote(ip, port, ...)
+                sess.put_remote(str(server_ip), int(port), local_off=0, remote_off=0, nbytes=sz, conn=conn_type)
 
                 done_seq += 1
                 ctrl_send_msg(ctrl, f"DONE {sz} {done_seq}".encode())
@@ -346,7 +387,8 @@ def run_client(
                 else:
                     sess.buf.buffer_put_gpu_ptr(gpu_ptr, nbytes=sz, offset=0)
 
-                sess.put_remote(server_ip, local_off=0, remote_off=0, nbytes=sz, conn=conn_type)
+                # UPDATED: put_remote(ip, port, ...)
+                sess.put_remote(str(server_ip), int(port), local_off=0, remote_off=0, nbytes=sz, conn=conn_type)
 
                 done_seq += 1
                 ctrl_send_msg(ctrl, f"DONE {sz} {done_seq}".encode())
@@ -378,7 +420,8 @@ def run_client(
             ctrl_send_msg(ctrl, f"CASE_END {sz}".encode())
             _ = ctrl_recv_msg(ctrl)
 
-        sess.disconnect(server_ip, conn=conn_type)
+        # UPDATED: disconnect(ip, port, ...)
+        sess.disconnect(str(server_ip), int(port), conn=conn_type)
 
     ctrl_send_msg(ctrl, b"BYE")
     _ = ctrl_recv_msg(ctrl)
@@ -421,12 +464,20 @@ def main() -> None:
     ap.add_argument("--bind-ip", default="0.0.0.0", help="HMC bind IP (server role)")
     ap.add_argument("--server-ip", default="", help="Server IP (client role)")
 
+    # NEW: local ip (used for auto UDS/TCP decision)
+    ap.add_argument("--local-ip", default="", help="Concrete local NIC IP (for ctrl auto UDS/TCP).")
+
     ap.add_argument("--ucx-port", type=int, default=2025, help="UCX HMC port")
     ap.add_argument("--rdma-port", type=int, default=2026, help="RDMA HMC port")
 
+    # perf TCP control
     ap.add_argument("--ctrl-bind-ip", default="0.0.0.0", help="Control bind IP (server role)")
     ap.add_argument("--ctrl-ip", default="", help="Control server IP (client role)")
     ap.add_argument("--ctrl-port", type=int, default=2027, help="TCP control port")
+
+    # NEW: HMC ctrl ports
+    ap.add_argument("--ctrl-tcp-port", type=int, default=0, help="HMC ctrl TCP port (0 => ctrl-port+1)")
+    ap.add_argument("--ctrl-uds-dir", default="/tmp", help="UDS directory for HMC ctrl sockets")
 
     ap.add_argument("--buffer-size", type=int, default=128 * 1024 * 1024, help="ConnBuffer size bytes")
     ap.add_argument("--sizes", default="64,256,1k,4k,64k,1m,4m,16m,64m", help="Comma sizes (e.g. 1k,4k,1m)")
@@ -439,19 +490,32 @@ def main() -> None:
     ap.add_argument("--gpu-conn", choices=["rdma", "ucx", "both"], default="rdma",
                     help="In GPU mode: which transport(s) to test. Default rdma (safer).")
 
+    # NEW: ctrl ranks
+    ap.add_argument("--self-rank", type=int, default=0, help="HMC ctrl rank of this process (server=0, client=1)")
+    ap.add_argument("--peer-rank", type=int, default=1, help="HMC ctrl rank of peer (server peer=1, client peer=0)")
+
     args = ap.parse_args()
 
+    ctrl_tcp_port = int(args.ctrl_tcp_port) if int(args.ctrl_tcp_port) > 0 else int(args.ctrl_port + 1)
+
     if args.role == "server":
+        local_ip = args.local_ip or args.bind_ip
+        if local_ip == "0.0.0.0":
+            raise SystemExit("server: --local-ip must be a concrete NIC ip (not 0.0.0.0) to enable auto UDS")
         run_server(
             bind_ip=args.bind_ip,
+            local_ip=local_ip,
             ucx_port=args.ucx_port,
             rdma_port=args.rdma_port,
             ctrl_bind_ip=args.ctrl_bind_ip,
             ctrl_port=args.ctrl_port,
+            ctrl_tcp_port=ctrl_tcp_port,
+            ctrl_uds_dir=args.ctrl_uds_dir,
             buffer_size=args.buffer_size,
             verify=args.verify,
             gpu=args.gpu,
             device=args.device,
+            self_rank=int(args.self_rank),
         )
         return
 
@@ -460,13 +524,18 @@ def main() -> None:
     if not args.ctrl_ip:
         raise SystemExit("--ctrl-ip is required for client role")
 
+    local_ip = args.local_ip or "127.0.0.1"
+
     sizes = parse_sizes(args.sizes)
     results = run_client(
         server_ip=args.server_ip,
+        local_ip=local_ip,
         ucx_port=args.ucx_port,
         rdma_port=args.rdma_port,
         ctrl_ip=args.ctrl_ip,
         ctrl_port=args.ctrl_port,
+        ctrl_tcp_port=ctrl_tcp_port,
+        ctrl_uds_dir=args.ctrl_uds_dir,
         buffer_size=args.buffer_size,
         sizes=sizes,
         iters=args.iters,
@@ -474,6 +543,8 @@ def main() -> None:
         gpu=args.gpu,
         device=args.device,
         gpu_conn=args.gpu_conn,
+        self_rank=int(args.self_rank),
+        peer_rank=int(args.peer_rank),
     )
     print_results(results)
 

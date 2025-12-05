@@ -80,6 +80,23 @@ struct ConnTypeHash {
   }
 };
 
+struct PeerKey {
+  std::string ip;
+  uint16_t port;
+
+  bool operator==(const PeerKey& o) const noexcept {
+    return port == o.port && ip == o.ip;
+  }
+};
+
+struct PeerKeyHash {
+  size_t operator()(const PeerKey& k) const noexcept {
+    size_t h1 = std::hash<std::string>{}(k.ip);
+    size_t h2 = std::hash<uint16_t>{}(k.port);
+    return h1 ^ (h2 + 0x9e3779b97f4a7c15ULL + (h1<<6) + (h1>>2));
+  }
+};
+
 class ConnManager : public std::enable_shared_from_this<ConnManager> {
 public:
   struct EndpointEntry {
@@ -108,13 +125,14 @@ public:
   // }
 
   // 安全访问接口
-  template <typename F> status_t withEndpoint(const std::string &ip, ConnType type, F &&func) {
-    // 第一阶段：查找条目
+  template <typename F> status_t withEndpoint(const std::string &ip, uint16_t port, ConnType type, F &&func) {
     EndpointEntry *entry = nullptr;
+    PeerKey key{ip, port};
+
     switch (type) {
     case ConnType::RDMA: {
       std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-      auto it = rdma_endpoint_map.find(ip);
+      auto it = rdma_endpoint_map.find(key);
       if (it == rdma_endpoint_map.end()) {
         return status_t::NOT_FOUND;
       }
@@ -123,7 +141,7 @@ public:
     }
     case ConnType::UCX: {
       std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-      auto it = ucx_endpoint_map.find(ip);
+      auto it = ucx_endpoint_map.find(key);
       if (it == ucx_endpoint_map.end()) {
         return status_t::NOT_FOUND;
       }
@@ -143,18 +161,18 @@ public:
     return func(entry->endpoint.get());
   }
 
-  void _addEndpoint(std::string ip, std::unique_ptr<Endpoint> endpoint, ConnType type);
-  void _removeEndpoint(std::string ip, ConnType type);
+  void _addEndpoint(std::string ip, uint16_t port, std::unique_ptr<Endpoint> endpoint, ConnType type);
+  void _removeEndpoint(std::string ip, uint16_t port, ConnType type);
 
   void _printEndpointMap() {
     logInfo("Number of key-value pairs: %lu", rdma_endpoint_map.size()+ucx_endpoint_map.size());
     std::cout << "Keys in the rdma_endpoint_map:" << std::endl;
     for (const auto &pair : rdma_endpoint_map) {
-      std::cout << pair.first << std::endl;
+      std::cout << pair.first.ip << " " << pair.first.port << std::endl;
     }
     std::cout << "Keys in the ucx_endpoint_map:" << std::endl;
     for (const auto &pair : ucx_endpoint_map) {
-      std::cout << pair.first << std::endl;
+      std::cout << pair.first.ip << " " << pair.first.port << std::endl;
     }
   }
 
@@ -162,8 +180,8 @@ public:
 
 private:
   size_t num_chs_ = 1;
-  std::unordered_map<std::string, EndpointEntry> rdma_endpoint_map;
-  std::unordered_map<std::string, EndpointEntry> ucx_endpoint_map;
+  std::unordered_map<PeerKey, EndpointEntry, PeerKeyHash> rdma_endpoint_map;
+  std::unordered_map<PeerKey, EndpointEntry, PeerKeyHash> ucx_endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex rdma_endpoint_map_mutex;
   std::mutex ucx_endpoint_map_mutex;

@@ -198,7 +198,10 @@ private:
   struct rdma_event_channel *cm_event_channel = NULL;
   size_t num_qps_ = 1;
 
-  status_t exchangeMetaData(std::string ip,
+  int meta_listen_fd_ = -1;
+  uint16_t meta_port_ = 0;
+
+  status_t exchangeMetaData(std::string ip, uint16_t port,
                             std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
@@ -226,7 +229,7 @@ private:
   std::shared_ptr<ConnBuffer> buffer;
   size_t num_qps_ = 1;
 
-  status_t exchangeMetaData(std::string ip,
+  status_t exchangeMetaData(std::string ip, uint16_t port,
                             std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 

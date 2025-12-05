@@ -53,6 +53,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
+#include <condition_variable>
 
 namespace hmc {
 
@@ -117,91 +118,131 @@ struct CtrlMsgHeader {
 static_assert(sizeof(CtrlMsgHeader) == 8, "Invalid CtrlMsgHeader size");
 
 /**
- * @class CtrlSocketManager
- * @brief TCP-based control message manager for synchronization and signaling.
+ * @brief Control message manager (TCP + UDS). Peer is identified by CtrlId (e.g. rank).
  *
- * This singleton manages control connections between hosts. It supports sending
- * and receiving small messages such as integers or user-defined structs.
+ * - Same-host: use UDS.
+ * - Cross-host: use TCP.
+ * - Server learns peer CtrlId via a HELLO message on each new connection.
+ *
+ * Thread-safety:
+ *   - connect/send/recv/close are thread-safe.
  */
 class CtrlSocketManager {
 public:
-  static CtrlSocketManager &instance();
+  using CtrlId = uint32_t; // rank
 
-  static uint16_t port() { return instance().default_port_; };
+  static CtrlSocketManager& instance();
 
-  CtrlSocketManager(const CtrlSocketManager &) = delete;
-  CtrlSocketManager &operator=(const CtrlSocketManager &) = delete;
+  CtrlSocketManager(const CtrlSocketManager&) = delete;
+  CtrlSocketManager& operator=(const CtrlSocketManager&) = delete;
 
-  bool is_server_{false};
+  // -------- Server --------
+  // Start listeners. Pass empty uds_path to disable UDS.
+  bool start(const std::string& bind_ip, uint16_t tcp_port,
+             const std::string& uds_path = "");
+  void stop();
+
   bool isServer() const { return is_server_; }
 
-  // ----- Server -----
-  bool startServer(const std::string &bindIp);
-  void stopServer();
+  // -------- Client/Dial --------
+  // Connect to peer via TCP or UDS, and register self_id to peer (HELLO).
+  bool connectTcp(CtrlId peer_id, const std::string& ip, uint16_t port, CtrlId self_id);
+  bool connectUds(CtrlId peer_id, const std::string& uds_path, CtrlId self_id);
+  bool waitPeer(CtrlId peer_id, int timeout_ms = 30000);
 
-  // ----- Client -----
-  int getCtrlSockFd(const std::string &ip);
+  // Helper: generate per-rank uds path (recommended for multi-proc same-host).
+  static std::string udsPathFor(const std::string& dir, CtrlId peer_id);
 
-  // ----- Message APIs -----
-  bool sendCtrlMsg(const std::string &ip, CtrlMsgType type, const void *payload,
-                   size_t len, uint16_t flags = 0);
-  bool recvCtrlMsg(const std::string &ip, CtrlMsgHeader &hdr,
-                   std::vector<uint8_t> &payload);
+  // -------- Message I/O (by CtrlId) --------
+  bool send(CtrlId peer_id, CtrlMsgType type, const void* payload, size_t len, uint16_t flags = 0);
+  bool recv(CtrlId peer_id, CtrlMsgHeader& hdr, std::vector<uint8_t>& payload);
 
-  bool sendCtrlInt(const std::string &ip, int value);
-  bool recvCtrlInt(const std::string &ip, int &value);
-  bool sendCtrlU64(const std::string &ip, uint64_t v);
-  bool recvCtrlU64(const std::string &ip, uint64_t &v);
+  bool sendInt(CtrlId peer_id, int v);
+  bool recvInt(CtrlId peer_id, int& v);
+
+  bool sendU64(CtrlId peer_id, uint64_t v);
+  bool recvU64(CtrlId peer_id, uint64_t& v);
 
   template <typename T>
-  bool sendCtrlStruct(const std::string &ip, const T &obj);
+  bool sendStruct(CtrlId peer_id, const T& obj);
 
-  template <typename T> bool recvCtrlStruct(const std::string &ip, T &obj);
+  template <typename T>
+  bool recvStruct(CtrlId peer_id, T& obj);
 
-  void closeConnection(const std::string &ip);
+  // -------- Cleanup --------
+  void close(CtrlId peer_id);
   void closeAll();
 
   ~CtrlSocketManager();
 
 private:
   CtrlSocketManager();
-  void acceptLoop();
 
-  int createSocket(const std::string &ip, uint16_t port);
-  static bool sendAll(int fd, const void *buf, size_t len);
-  static bool recvAll(int fd, void *buf, size_t len);
+  // accept threads
+  void tcpAcceptLoop_();
+  void udsAcceptLoop_();
 
-  std::unordered_map<std::string, int> ip_to_fd_;
-  std::mutex mu_;
+  // connection bootstrap: fd must first exchange HELLO(self_id) and register peer_id
+  bool sendHello_(int fd, CtrlId self_id);
+  bool recvHelloAndBind_(int fd, const std::string& from_hint);
 
-  int listen_fd_{-1};
-  std::thread listener_thread_;
+  // dialing
+  int dialTcp_(const std::string& ip, uint16_t port);
+  int dialUds_(const std::string& uds_path);
+
+  // raw io
+  static bool sendAll_(int fd, const void* buf, size_t len);
+  static bool recvAll_(int fd, void* buf, size_t len);
+
+  int fdOf_(CtrlId peer_id) const;
+
+private:
+  struct Conn {
+    int fd{-1};
+  };
+
+  bool is_server_{false};
+
+  mutable std::mutex mu_;
+  std::unordered_map<CtrlId, Conn> id_to_conn_;
+
+  // server state
   std::atomic<bool> running_{false};
-  uint16_t default_port_ = 5555;
+
+  // TCP listener
+  int tcp_listen_fd_{-1};
+  std::thread tcp_thread_;
+  std::string bind_ip_;
+  uint16_t tcp_port_{0};
+
+  // UDS listener
+  int uds_listen_fd_{-1};
+  std::thread uds_thread_;
+  std::string uds_path_;
+
+  // for tmp socket fd
+  std::unordered_map<std::string, std::deque<int>> pending_by_ip_;
+
+  mutable std::condition_variable cv_;
 };
 
-// ===== Template Implementations =====
-
-/**
- * @brief Send a trivially copyable struct as a control message.
- */
+// Templates
 template <typename T>
-bool CtrlSocketManager::sendCtrlStruct(const std::string &ip, const T &obj) {
-  static_assert(std::is_trivially_copyable<T>::value, "T must be POD");
-  return sendCtrlMsg(ip, CTRL_STRUCT, &obj, sizeof(T));
+bool CtrlSocketManager::sendStruct(CtrlId peer_id, const T& obj) {
+  static_assert(std::is_trivially_copyable<T>::value, "T must be trivially copyable");
+  // Replace CTRL_STRUCT with your real enum value.
+  return send(peer_id, static_cast<CtrlMsgType>(CtrlMsgType::CTRL_STRUCT), &obj, sizeof(T));
 }
 
-/**
- * @brief Receive a struct message from the control socket.
- */
 template <typename T>
-bool CtrlSocketManager::recvCtrlStruct(const std::string &ip, T &obj) {
+bool CtrlSocketManager::recvStruct(CtrlId peer_id, T& obj) {
   CtrlMsgHeader hdr;
   std::vector<uint8_t> payload;
-  if (!recvCtrlMsg(ip, hdr, payload))
+  if (!recv(peer_id, hdr, payload)) return false;
+
+  if (hdr.type != static_cast<uint16_t>(CtrlMsgType::CTRL_STRUCT) || payload.size() != sizeof(T))
     return false;
-  if (hdr.type != CTRL_STRUCT || payload.size() != sizeof(T))
-    return false;
+
   std::memcpy(&obj, payload.data(), sizeof(T));
   return true;
 }
@@ -222,46 +263,85 @@ private:
   std::unordered_map<uint64_t, Endpoint*> inflight_ep_;
 
 public:
+  using CtrlId = hmc::CtrlSocketManager::CtrlId; // rank
+  enum class CtrlTransport : uint8_t { TCP = 0, UDS = 1 };
+  struct CtrlLink {
+    CtrlTransport transport{CtrlTransport::TCP};
+    std::string ip;
+    uint16_t port{0};
+    std::string uds_path;
+  };
+
   explicit Communicator(std::shared_ptr<ConnBuffer> buffer, size_t num_chs = 1);
 
   // --- Core Operations ---
   // single side write/read
   status_t put(std::string ip,
+             uint16_t port,
              size_t local_off,
              size_t remote_off,
              size_t size,
              ConnType connType = ConnType::RDMA);
 
   status_t get(std::string ip,
+             uint16_t port,
              size_t local_off,
              size_t remote_off,
              size_t size,
              ConnType connType = ConnType::RDMA);
 
-  status_t putNB(std::string ip, size_t local_off, size_t remote_off, size_t size,
-               uint64_t *wr_id, ConnType connType = ConnType::RDMA);
-  status_t getNB(std::string ip, size_t local_off, size_t remote_off, size_t size,
-                uint64_t *wr_id, ConnType connType = ConnType::RDMA);
+  status_t putNB(std::string ip,
+                 uint16_t port,
+                 size_t local_off,
+                 size_t remote_off,
+                 size_t size,
+                 uint64_t* wr_id,
+                 ConnType connType = ConnType::RDMA);
+
+  status_t getNB(std::string ip,
+                 uint16_t port,
+                 size_t local_off,
+                 size_t remote_off,
+                 size_t size,
+                 uint64_t* wr_id,
+                 ConnType connType = ConnType::RDMA);
+
   status_t wait(uint64_t wr_id);
   status_t wait(const std::vector<uint64_t>& wr_ids);
 
-  status_t ctrlSend(std::string ip, uint64_t tag);
-  status_t ctrlRecv(std::string ip, uint64_t *tag);
-
-  // --- High-level Data APIs (UHM interface, only RDMA) ---
-  status_t sendDataTo(std::string ip, void *send_buf, size_t buf_size,
+  // --- High-level Data APIs (UHM interface, only RDMA, only p2p with different IP) ---
+  status_t sendDataTo(std::string ip, uint16_t port, void *send_buf, size_t buf_size,
                       MemoryType buf_type, ConnType connType = ConnType::RDMA);
 
   status_t recvDataFrom(std::string ip, void *recv_buf, size_t buf_size,
                         MemoryType buf_type, size_t *flag,
                         ConnType connType = ConnType::RDMA);
 
+  status_t ctrlSend(CtrlId peer, uint64_t tag);
+  status_t ctrlRecv(CtrlId peer, uint64_t* tag);
+
   // --- Connection Management ---
-  status_t initServer(std::string ip, uint16_t port, ConnType serverType);
+  status_t initCtrlServer(const std::string& bind_ip, uint16_t tcp_port,
+                          const std::string& uds_path = "");
+  status_t closeCtrl();
+  status_t connectCtrl(CtrlId peer_id, CtrlId self_id, const CtrlLink& link);
+  status_t closeCtrlPeer(CtrlId peer_id);
+  static std::string udsPathFor(const std::string& dir, CtrlId peer_id);
+
+  status_t initServer(const std::string& bind_ip,
+                      uint16_t data_port,
+                      uint16_t ctrl_tcp_port,
+                      const std::string& ctrl_uds_path,
+                      ConnType serverType);
   status_t closeServer();
-  status_t connectTo(std::string ip, uint16_t port, ConnType connType);
-  status_t disConnect(std::string ip, ConnType connType);
-  status_t checkConn(std::string ip, ConnType connType);
+  status_t connectTo(CtrlId peer_id,
+                     CtrlId self_id,
+                     const std::string& peer_ip,
+                     uint16_t data_port,
+                     const CtrlLink& ctrl_link,
+                     ConnType connType);
+  status_t disConnect(const std::string& ip, uint16_t port, ConnType connType);
+  status_t checkConn(const std::string& ip, uint16_t port, ConnType connType);
 
   ~Communicator();
 };

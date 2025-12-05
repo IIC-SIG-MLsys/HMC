@@ -15,6 +15,6 @@ CUDA_VISIBLE_DEVICES=6 ./build/apps/uhm_app/uhm_client --mode rdma_cpu > rdma_cp
 CUDA_VISIBLE_DEVICES=5 ./build/apps/uhm_app/uhm_server --mode serial
 CUDA_VISIBLE_DEVICES=6 ./build/apps/uhm_app/uhm_client --mode serial > serial.log 2>&1
 
-export UCX_NET_DEVICES=mlx5_3:1 # 如果遇到连接问题，换网卡
+export UCX_NET_DEVICES=mlx5_0:1,mlx5_3:1 # 如果遇到连接问题，换网卡
 CUDA_VISIBLE_DEVICES=5 ./build/apps/uhm_app/uhm_server --mode ucx
 CUDA_VISIBLE_DEVICES=6 ./build/apps/uhm_app/uhm_client --mode ucx

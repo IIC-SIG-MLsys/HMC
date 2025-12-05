@@ -120,9 +120,8 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
       return status_t::ERROR;
     }
     std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-    auto &entry = rdma_endpoint_map[targetIp];
-    // std::lock_guard<std::mutex> entry_lock(entry.mutex); //
-    // 必是单独访问,不需要锁
+    PeerKey key{targetIp, targetPort};
+    auto &entry = rdma_endpoint_map[key];
     entry.endpoint = std::move(endpoint);
     break;
   }
@@ -133,9 +132,8 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
       return status_t::ERROR;
     }
     std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-    auto &entry = ucx_endpoint_map[targetIp];
-    // std::lock_guard<std::mutex> entry_lock(entry.mutex); //
-    // 必是单独访问,不需要锁
+    PeerKey key{targetIp, targetPort};
+    auto &entry = ucx_endpoint_map[key];
     entry.endpoint = std::move(endpoint);
     break;
   }
@@ -146,19 +144,20 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
   return status_t::SUCCESS;
 }
 
-void ConnManager::_addEndpoint(std::string ip,
+void ConnManager::_addEndpoint(std::string ip, uint16_t port,
                                std::unique_ptr<Endpoint> endpoint, ConnType connType) {
+  PeerKey key{ip, port};
   if (endpoint) {
     switch (connType) {
     case ConnType::RDMA: {
       std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-      auto &entry = rdma_endpoint_map[ip];
+      auto &entry = rdma_endpoint_map[key];
       entry.endpoint = std::move(endpoint);
       break;
     }
     case ConnType::UCX: {
       std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-      auto &entry = ucx_endpoint_map[ip];
+      auto &entry = ucx_endpoint_map[key];
       entry.endpoint = std::move(endpoint);
       break;
     }
@@ -168,19 +167,20 @@ void ConnManager::_addEndpoint(std::string ip,
   }
 }
 
-void ConnManager::_removeEndpoint(std::string ip, ConnType connType) {
+void ConnManager::_removeEndpoint(std::string ip, uint16_t port, ConnType connType) {
   // std::lock_guard<std::mutex> lock(endpoint_map_mutex); // 确保线程安全
   // std::unique_ptr<Endpoint> ep = std::move(endpoint_map[ip]); //
   // 删除键值的时候，必须先移交所有权，才能删除 this->endpoint_map.erase(ip);
   // ep.reset();
   // // _printEndpointMap();
 
+  PeerKey key{ip, port};
   // 两阶段删除保证
   std::unique_ptr<Endpoint> to_delete;
   switch (connType) {
   case ConnType::RDMA: {
     std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-    auto it = rdma_endpoint_map.find(ip);
+    auto it = rdma_endpoint_map.find(key);
     if (it == rdma_endpoint_map.end())
       return;
     to_delete = std::move(it->second.endpoint);
@@ -189,7 +189,7 @@ void ConnManager::_removeEndpoint(std::string ip, ConnType connType) {
   }
   case ConnType::UCX: {
     std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-    auto it = ucx_endpoint_map.find(ip);
+    auto it = ucx_endpoint_map.find(key);
     if (it == ucx_endpoint_map.end())
       return;
     to_delete = std::move(it->second.endpoint);

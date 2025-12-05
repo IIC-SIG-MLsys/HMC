@@ -169,7 +169,7 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
         continue;
       }
 
-      conn_manager->_addEndpoint(peer_ip, std::unique_ptr<Endpoint>(endpoint.release()), ConnType::UCX);
+      conn_manager->_addEndpoint(peer_ip, 0, std::unique_ptr<Endpoint>(endpoint.release()), ConnType::UCX);
 
       logInfo("UCXServer established with %s remote_base=0x%llx remote_size=%llu rkey_len=%u",
               peer_ip.c_str(),

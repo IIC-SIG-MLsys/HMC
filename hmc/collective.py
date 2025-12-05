@@ -1,9 +1,6 @@
+# collective.py
 from __future__ import annotations
 
-import json
-import socket
-import threading
-import time
 from dataclasses import dataclass
 from typing import Any, Optional
 
@@ -17,6 +14,7 @@ class GroupMember:
     ip: str
     port_ucx: int
     port_rdma: int
+    port_ctrl: int
     mem_type: int
     device_id: int
     buffer_size: int
@@ -36,6 +34,7 @@ class GroupMember:
             "ip": str(self.ip),
             "port_ucx": int(self.port_ucx),
             "port_rdma": int(self.port_rdma),
+            "port_ctrl": int(self.port_ctrl),
             "mem_type": int(self.mem_type),
             "device_id": int(self.device_id),
             "buffer_size": int(self.buffer_size),
@@ -50,6 +49,7 @@ class GroupMember:
             ip=str(d["ip"]),
             port_ucx=int(d["port_ucx"]),
             port_rdma=int(d["port_rdma"]),
+            port_ctrl=int(d["port_ctrl"]),
             mem_type=int(d["mem_type"]),
             device_id=int(d["device_id"]),
             buffer_size=int(d["buffer_size"]),
@@ -87,7 +87,7 @@ class Group:
     @property
     def left(self) -> GroupMember:
         return self.members[(self.rank - 1 + self.world) % self.world]
-    
+
 
 def init_group(
     *,
@@ -96,6 +96,9 @@ def init_group(
     my_ip: str = "127.0.0.1",
     port_ucx: int = 0,
     port_rdma: int = 0,
+    port_ctrl: int = 0,
+    ctrl_tcp_port: Optional[int] = None,
+    ctrl_uds_dir: str = "/tmp",
     mem_type: MemoryType = MemoryType.CPU,
     device_id: int = 0,
     num_chs: int = 1,
@@ -116,25 +119,32 @@ def init_group(
         ip=str(my_ip),
         port_ucx=int(port_ucx),
         port_rdma=int(port_rdma),
+        port_ctrl=int(port_ctrl),
         mem_type=int(mem_type),
         device_id=int(device_id),
         buffer_size=int(session.buf.size),
         num_chs=int(num_chs),
     )
 
-    # exchange roster (everyone learns everyone's ip/ports/mem_type)
     gathered: list[Optional[dict[str, Any]]] = [None for _ in range(world)]
     dist.all_gather_object(gathered, me.to_dict())
     members = [GroupMember.from_dict(x) for x in gathered]  # type: ignore[arg-type]
 
     g = Group(session=session, members=members, rank=rank, group_id=group_id)
 
-    # start local servers (UCX + RDMA) once, in group init
     if start_servers:
-        session.init_server(my_ip, int(port_ucx), conn=ConnType.UCX)
-        session.init_server(my_ip, int(port_rdma), conn=ConnType.RDMA)
+        session.set_local_ip(str(my_ip))
+        tcp_port = int(ctrl_tcp_port if ctrl_tcp_port is not None else me.port_ctrl)
 
-    # make sure everyone's server is up before any data-plane connect
+        session.init_server(
+            bind_ip=str(my_ip),
+            ucx_port=int(port_ucx),
+            rdma_port=int(port_rdma),
+            ctrl_tcp_port=int(tcp_port),
+            self_id=rank,
+            ctrl_uds_dir=str(ctrl_uds_dir),
+        )
+
     if start_servers and server_barrier:
         dist.barrier()
 
@@ -144,6 +154,7 @@ def init_group(
 def _is_torch_tensor(x: Any) -> bool:
     try:
         import torch  # type: ignore
+
         return torch.is_tensor(x)
     except Exception:
         return False
@@ -152,6 +163,7 @@ def _is_torch_tensor(x: Any) -> bool:
 def _is_numpy_array(x: Any) -> bool:
     try:
         import numpy as np  # type: ignore
+
         return isinstance(x, np.ndarray)
     except Exception:
         return False
@@ -161,57 +173,177 @@ def _nbytes(x: Any) -> int:
     if _is_numpy_array(x):
         return int(x.nbytes)
     if _is_torch_tensor(x):
-        # torch.Tensor
         return int(x.numel() * x.element_size())
-    # fallback: buffer protocol
     return len(memoryview(x).cast("B"))
 
+
 def _pick_conn(a: MemoryType, b: MemoryType) -> ConnType:
-    """
-    Link selection rules (as you specified):
-
-    - both NVIDIA_GPU -> UCX
-    - both AMD_GPU    -> UCX
-    - both CPU        -> UCX
-    - both CAMBRICON  -> RDMA
-    - both MOORE      -> RDMA
-
-    - GPU vs CPU:
-        NVIDIA/AMD with CPU -> UCX
-        CAMBRICON/MOORE with CPU -> RDMA
-
-    Any other mixed GPU-vendor case (e.g., NVIDIA vs AMD, NVIDIA vs CAMBRICON, ...)
-    is not explicitly specified; we choose:
-      - if either side is CAMBRICON or MOORE -> RDMA
-      - else -> UCX
-    """
     a = MemoryType(int(a))
     b = MemoryType(int(b))
 
-    if a == MemoryType.CPU and b == MemoryType.CPU:
-        return ConnType.UCX
+    UCX_GPU = {MemoryType.NVIDIA_GPU, MemoryType.AMD_GPU}
+    RDMA_GPU = {MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU}
+    GPU = UCX_GPU | RDMA_GPU
 
     if a == b:
-        if a in (MemoryType.NVIDIA_GPU, MemoryType.AMD_GPU):
+        if a == MemoryType.CPU:
             return ConnType.UCX
-        if a in (MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU):
+        if a in UCX_GPU:
+            return ConnType.UCX
+        if a in RDMA_GPU:
             return ConnType.RDMA
-        # DEFAULT or others -> conservative: UCX
         return ConnType.UCX
 
-    # one CPU one GPU
     if a == MemoryType.CPU or b == MemoryType.CPU:
         other = b if a == MemoryType.CPU else a
-        if other in (MemoryType.NVIDIA_GPU, MemoryType.AMD_GPU):
-            return ConnType.UCX
-        if other in (MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU):
+        if other in RDMA_GPU:
             return ConnType.RDMA
         return ConnType.UCX
 
-    # mixed GPU vendors not fully specified
-    if (a in (MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU)) or (b in (MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU)):
+    if (a in GPU) and (b in GPU):
+        if (a in RDMA_GPU) or (b in RDMA_GPU):
+            return ConnType.RDMA
         return ConnType.RDMA
+
     return ConnType.UCX
+
+
+def _conn_for_pair(group: Group, a_rank: int, b_rank: int, conn: ConnType | str) -> ConnType:
+    if conn != "auto":
+        return ConnType(conn)
+    a = group.peer(a_rank).memory_type
+    b = group.peer(b_rank).memory_type
+    return _pick_conn(a, b)
+
+
+def _connect_peer(group: Group, peer_rank: int, conn: ConnType) -> None:
+    sess = group.session
+    me = group.me
+    peer = group.peer(peer_rank)
+    sess.connect(
+        peer_id=int(peer.rank),
+        self_id=int(me.rank),
+        peer_ip=str(peer.ip),
+        data_port=int(peer.port_for(conn)),
+        ctrl_tcp_port=int(peer.port_ctrl),
+        conn=conn,
+    )
+
+
+def _copy_self_if_needed(group: Group, *, send_base: int, recv_base: int, bytes_per_peer: int, do_self_copy: bool) -> None:
+    if not do_self_copy or bytes_per_peer <= 0:
+        return
+    sess = group.session
+    r = int(group.rank)
+    sess.buf.buffer_copy_within(
+        dst_offset=int(recv_base + r * bytes_per_peer),
+        src_offset=int(send_base + r * bytes_per_peer),
+        nbytes=int(bytes_per_peer),
+    )
+
+
+def _put_chunked(
+    sess: Session,
+    ip: str,
+    port: int,
+    *,
+    local_off: int,
+    remote_off: int,
+    nbytes: int,
+    chunk_bytes: int,
+    conn: ConnType,
+) -> None:
+    moved = 0
+    while moved < nbytes:
+        n = min(int(chunk_bytes), int(nbytes - moved))
+        sess.put_remote(
+            ip,
+            int(port),
+            local_off=int(local_off + moved),
+            remote_off=int(remote_off + moved),
+            nbytes=int(n),
+            conn=conn,
+        )
+        moved += n
+
+
+def _get_chunked(
+    sess: Session,
+    ip: str,
+    port: int,
+    *,
+    local_off: int,
+    remote_off: int,
+    nbytes: int,
+    chunk_bytes: int,
+    conn: ConnType,
+) -> None:
+    moved = 0
+    while moved < nbytes:
+        n = min(int(chunk_bytes), int(nbytes - moved))
+        sess.get_remote(
+            ip,
+            int(port),
+            local_off=int(local_off + moved),
+            remote_off=int(remote_off + moved),
+            nbytes=int(n),
+            conn=conn,
+        )
+        moved += n
+
+
+def _direct_alltoall_core(
+    group: Group,
+    *,
+    send_base: int,
+    recv_base: int,
+    bytes_per_peer: int,
+    chunk_bytes: int,
+    do_self_copy: bool,
+    conn: ConnType | str = "auto",
+) -> None:
+    sess = group.session
+    r = int(group.rank)
+    w = int(group.world)
+
+    if w <= 1:
+        _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+        return
+
+    # connect to all peers (may vary per peer if conn="auto")
+    for peer in range(w):
+        if peer == r:
+            continue
+        c = _conn_for_pair(group, r, peer, conn)
+        _connect_peer(group, peer, c)
+
+    _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+
+    for dst in range(w):
+        if dst == r:
+            continue
+
+        c = _conn_for_pair(group, r, dst, conn)
+        peer = group.peer(dst)
+        peer_ip = str(peer.ip)
+        peer_port = int(peer.port_for(c))
+
+        local_src = int(send_base + dst * bytes_per_peer)
+        remote_dst = int(recv_base + r * bytes_per_peer)
+
+        _put_chunked(
+            sess,
+            peer_ip,
+            peer_port,
+            local_off=local_src,
+            remote_off=remote_dst,
+            nbytes=int(bytes_per_peer),
+            chunk_bytes=int(chunk_bytes),
+            conn=c,
+        )
+
+    import torch.distributed as dist  # type: ignore
+    dist.barrier()
 
 
 def _ring_alltoall_core(
@@ -222,33 +354,31 @@ def _ring_alltoall_core(
     bytes_per_peer: int,
     chunk_bytes: int,
     do_self_copy: bool,
+    conn: ConnType | str = "auto",
 ) -> None:
     sess = group.session
     r = int(group.rank)
     w = int(group.world)
 
     if w <= 1:
-        if do_self_copy and bytes_per_peer > 0:
-            tmp = sess.buf.buffer_get_cpu(nbytes=int(bytes_per_peer), offset=int(send_base))
-            sess.buf.buffer_put_cpu(tmp, nbytes=int(bytes_per_peer), offset=int(recv_base))
+        _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
         return
 
-    me = group.me
-    right = group.right
-    left = group.left
+    right_rank = int(group.right.rank)
+    left_rank = int(group.left.rank)
 
-    conn_right = _pick_conn(me.memory_type, right.memory_type)
-    conn_left = _pick_conn(me.memory_type, left.memory_type)
+    conn_right = _conn_for_pair(group, r, right_rank, conn)
+    conn_left = _conn_for_pair(group, r, left_rank, conn)
 
-    sess.connect(right.ip, right.port_for(conn_right), conn=conn_right)
-    sess.connect(left.ip, left.port_for(conn_left), conn=conn_left)
+    _connect_peer(group, right_rank, conn_right)
+    _connect_peer(group, left_rank, conn_left)
 
-    if do_self_copy and bytes_per_peer > 0:
-        sess.buf.buffer_copy_within(
-            dst_offset=int(recv_base + r * bytes_per_peer),
-            src_offset=int(send_base + r * bytes_per_peer),
-            nbytes=int(bytes_per_peer),
-        )
+    right = group.peer(right_rank)
+    left = group.peer(left_rank)
+    right_ip, right_port = str(right.ip), int(right.port_for(conn_right))
+    left_ip, left_port = str(left.ip), int(left.port_for(conn_left))
+
+    _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
 
     for s in range(1, w):
         send_peer = (r - s + w) % w
@@ -264,57 +394,45 @@ def _ring_alltoall_core(
         while moved < bytes_per_peer:
             n = min(int(chunk_bytes), int(bytes_per_peer - moved))
 
+            # left.get -> me.recv[recv_peer]
             sess.get_remote(
-                left.ip,
-                local_off=my_recv_off + moved,
-                remote_off=src_off_on_left + moved,
-                nbytes=n,
+                left_ip,
+                left_port,
+                local_off=int(my_recv_off + moved),
+                remote_off=int(src_off_on_left + moved),
+                nbytes=int(n),
                 conn=conn_left,
             )
-
+            # me.send[send_peer] -> right.recv[recv_peer]
             sess.put_remote(
-                right.ip,
-                local_off=send_off + moved,
-                remote_off=dst_off_on_right + moved,
-                nbytes=n,
+                right_ip,
+                right_port,
+                local_off=int(send_off + moved),
+                remote_off=int(dst_off_on_right + moved),
+                nbytes=int(n),
                 conn=conn_right,
             )
 
             moved += n
 
-        sess.ctrl_send(right.ip, int(s))
-        tag = sess.ctrl_recv(left.ip)
+        sess.ctrl_send(right_rank, int(s))
+        tag = sess.ctrl_recv(left_rank)
         if int(tag) != int(s):
             raise RuntimeError(f"ring step tag mismatch: expect={s} got={tag}")
 
 
-def ring_alltoall(
+def alltoall(
     group: Group,
     send: Any,
     recv: Any,
     *,
+    algo: str = "auto",               # "auto" | "direct" | "ring"
+    conn: ConnType | str = "auto",    # "auto" | ConnType
     send_bias: int = 0,
     recv_bias: Optional[int] = None,
     chunk_bytes: int = 4 * 1024 * 1024,
     do_self_copy: bool = True,
 ) -> None:
-    """
-    High-level ring all-to-all that accepts numpy arrays or torch tensors.
-
-    Semantics:
-      - send is treated as a flat byte buffer of size N.
-      - N must be divisible by world; each rank sends N/world bytes to every peer.
-      - recv must have the same nbytes as send.
-
-    Staging:
-      - send is staged into ConnBuffer at [send_bias, send_bias+N)
-      - recv is staged from ConnBuffer at [recv_bias, recv_bias+N) into 'recv'
-
-    Notes:
-      - No raw pointer API needed.
-      - IOBuffer may be CPU/GPU; send/recv may be CPU/GPU; IOBuffer.put/get_into handle it.
-      - Assumes servers already started (UCX+RDMA), like your perf testcase.
-    """
     sess = group.session
     w = int(group.world)
 
@@ -330,27 +448,40 @@ def ring_alltoall(
     total = int(n_send)
     bytes_per_peer = total // w
 
-    # choose recv_bias default right after send region
     if recv_bias is None:
-        recv_bias = int(send_bias) + int(total)
+        recv_bias = int(send_bias) + total
 
-    # check connbuf capacity
-    need = int(recv_bias) + int(total)
+    need = int(recv_bias) + total
     if need > int(sess.buf.size):
         raise ValueError(f"ConnBuffer too small: need={need} have={sess.buf.size}")
 
-    # Stage send into ConnBuffer (auto path CPU/GPU)
+    if algo == "auto":
+        algo = "direct" if w <= 8 else "ring"
+    algo = algo.lower().strip()
+
     sess.buf.put(send, nbytes=total, offset=int(send_bias), device=None)
 
-    # Run ring over ConnBuffer regions
-    _ring_alltoall_core(
-        group,
-        send_base=int(send_bias),
-        recv_base=int(recv_bias),
-        bytes_per_peer=int(bytes_per_peer),
-        chunk_bytes=int(chunk_bytes),
-        do_self_copy=bool(do_self_copy),
-    )
+    if algo == "direct":
+        _direct_alltoall_core(
+            group,
+            send_base=int(send_bias),
+            recv_base=int(recv_bias),
+            bytes_per_peer=int(bytes_per_peer),
+            chunk_bytes=int(chunk_bytes),
+            do_self_copy=bool(do_self_copy),
+            conn=conn,
+        )
+    elif algo == "ring":
+        _ring_alltoall_core(
+            group,
+            send_base=int(send_bias),
+            recv_base=int(recv_bias),
+            bytes_per_peer=int(bytes_per_peer),
+            chunk_bytes=int(chunk_bytes),
+            do_self_copy=bool(do_self_copy),
+            conn=conn,
+        )
+    else:
+        raise ValueError(f"Unknown algo: {algo!r}")
 
-    # Stage recv out of ConnBuffer into user buffer (auto path CPU/GPU)
     sess.buf.get_into(recv, nbytes=total, offset=int(recv_bias), device=None)

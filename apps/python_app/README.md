@@ -14,7 +14,7 @@ python3 perf.py --role client --server-ip 192.168.2.244 --ctrl-ip 192.168.2.244 
 # server
 CUDA_VISIBLE_DEVICES=5 python3 perf.py --role server --bind-ip 192.168.2.244 --ctrl-bind-ip 192.168.2.244 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --gpu --device 0 --verify
 # client（默认只测 rdma；要都测用 --gpu-conn both）
-CUDA_VISIBLE_DEVICES=6 python3 perf.py --role client --server-ip 192.168.2.244 --ctrl-ip 192.168.2.244 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --gpu --device 0 --gpu-conn ucx --sizes 4k,64k,1m,4m,16m,64m
+CUDA_VISIBLE_DEVICES=6 python3 perf.py --role client --server-ip 192.168.2.244 --ctrl-ip 192.168.2.244 --ucx-port 2025 --rdma-port 2026 --ctrl-port 2027 --gpu --device 0 --gpu-conn both --sizes 4k,64k,1m,4m,16m,64m
 ```
 
 ```
@@ -30,4 +30,4 @@ CUDA_VISIBLE_DEVICES=1 python3 perf_rocm.py --role client --server-ip 192.168.2.
 
 
 # collective
-torchrun --standalone --nproc_per_node=4 collective.py
+CUDA_VISIBLE_DEVICES=5 torchrun --standalone --nproc_per_node=4 collective.py
