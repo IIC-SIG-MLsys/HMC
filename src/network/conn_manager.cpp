@@ -203,6 +203,59 @@ void ConnManager::_removeEndpoint(std::string ip, uint16_t port, ConnType connTy
   return;
 }
 
+status_t ConnManager::_removeEndpointIfMatch(std::string ip, uint16_t port,
+                                             ConnType connType,
+                                             uint64_t expected_conn_id) {
+  PeerKey key{ip, port};
+
+  std::unique_ptr<Endpoint> to_delete;
+
+  switch (connType) {
+  case ConnType::RDMA: {
+    std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
+    auto it = rdma_endpoint_map.find(key);
+    if (it == rdma_endpoint_map.end()) {
+      return status_t::SUCCESS;
+    }
+
+    Endpoint* cur = it->second.endpoint.get();
+    if (!cur) {
+      rdma_endpoint_map.erase(it);
+      return status_t::SUCCESS;
+    }
+
+    auto* rdma_ep = dynamic_cast<RDMAEndpoint*>(cur);
+    if (!rdma_ep) {
+      return status_t::SUCCESS;
+    }
+
+    if (rdma_ep->conn_id_ != expected_conn_id) {
+      return status_t::SUCCESS;
+    }
+
+    to_delete = std::move(it->second.endpoint);
+    rdma_endpoint_map.erase(it);
+    break;
+  }
+  case ConnType::UCX: {
+    std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
+    auto it = ucx_endpoint_map.find(key);
+    if (it == ucx_endpoint_map.end()) {
+      return status_t::SUCCESS;
+    }
+    to_delete = std::move(it->second.endpoint);
+    ucx_endpoint_map.erase(it);
+    break;
+  }
+  default:
+    return status_t::INVALID_CONFIG;
+  }
+
+  to_delete.reset();
+  return status_t::SUCCESS;
+}
+
+
 ConnManager::~ConnManager() {
   stopServer();
 }

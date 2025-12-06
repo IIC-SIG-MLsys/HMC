@@ -163,6 +163,9 @@ public:
 
   void _addEndpoint(std::string ip, uint16_t port, std::unique_ptr<Endpoint> endpoint, ConnType type);
   void _removeEndpoint(std::string ip, uint16_t port, ConnType type);
+  status_t _removeEndpointIfMatch(std::string ip, uint16_t port,
+                                             ConnType connType,
+                                             uint64_t expected_conn_id);
 
   void _printEndpointMap() {
     logInfo("Number of key-value pairs: %lu", rdma_endpoint_map.size()+ucx_endpoint_map.size());

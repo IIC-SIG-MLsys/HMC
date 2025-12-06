@@ -26,7 +26,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-const size_t buffer_size = 1024ULL * 1024 * 128;
+const size_t buffer_size = 1024ULL * 1024 * 128; // max 32 for MLU
 const int device_id = 0;
 const int g_port = 2025;
 const int ctrl_port = 2027;
@@ -126,7 +126,9 @@ void recv_channel_slice_uhm(Context ctx) {
   // NOTE: per your new Communicator, recvDataFrom is still recvDataFrom(ip, ...)
   // and is intended for RDMA-only cross-IP p2p legacy UHM path;
   // so we DO NOT add port here.
-  if (comm->recvDataFrom(client_ip, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT,
+
+  // 如果client也init了server，那么此处用client的rdma port，否则是0
+  if (comm->recvDataFrom(client_ip, 0, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT,
                          &flags) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UHM] Receive failed.";

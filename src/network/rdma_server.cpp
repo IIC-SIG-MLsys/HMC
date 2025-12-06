@@ -1,8 +1,3 @@
-/**
- * @copyright
- * Copyright (c) 2025,
- * SDU spgroup Holding Limited. All rights reserved.
- */
 #include "net_rdma.h"
 #include <hmc.h>
 
@@ -15,6 +10,7 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <vector>
+#include <endian.h>
 
 namespace {
 
@@ -40,9 +36,6 @@ bool recvAll(int fd, void *buf, size_t len) {
   return true;
 }
 
-bool sendU16(int fd, uint16_t v) { return sendAll(fd, &v, sizeof(v)); }
-bool recvU16(int fd, uint16_t &v) { return recvAll(fd, &v, sizeof(v)); }
-
 bool sendMsg(int fd, hmc::CtrlMsgType type, const void *payload, size_t len,
              uint16_t flags = 0) {
   hmc::CtrlMsgHeader hdr{static_cast<uint16_t>(type), flags,
@@ -57,26 +50,6 @@ bool recvMsg(int fd, hmc::CtrlMsgHeader &hdr, std::vector<uint8_t> &payload) {
   payload.resize(hdr.length);
   if (hdr.length > 0 && !recvAll(fd, payload.data(), hdr.length)) return false;
   return true;
-}
-
-int dialOnce(const std::string &ip, uint16_t port) {
-  int fd = ::socket(AF_INET, SOCK_STREAM, 0);
-  if (fd < 0) return -1;
-
-  struct sockaddr_in addr;
-  std::memset(&addr, 0, sizeof(addr));
-  addr.sin_family = AF_INET;
-  addr.sin_port = htons(port);
-  if (::inet_pton(AF_INET, ip.c_str(), &addr.sin_addr) <= 0) {
-    ::close(fd);
-    return -1;
-  }
-  if (::connect(fd, reinterpret_cast<struct sockaddr *>(&addr), sizeof(addr)) <
-      0) {
-    ::close(fd);
-    return -1;
-  }
-  return fd;
 }
 
 int acceptOnce(int listen_fd, std::string *out_ip = nullptr) {
@@ -95,25 +68,60 @@ int acceptOnce(int listen_fd, std::string *out_ip = nullptr) {
   return fd;
 }
 
+// cm_id -> (ip,port,conn_id)
+struct BoundKey {
+  std::string ip;
+  uint16_t port = 0;
+  uint64_t conn_id = 0;
+};
+
+std::mutex g_bind_mu;
+std::unordered_map<rdma_cm_id*, BoundKey> g_bound_by_cmid;
+
+static void bindCmid_(rdma_cm_id* id, const std::string& ip, uint16_t port, uint64_t conn_id) {
+  std::lock_guard<std::mutex> lk(g_bind_mu);
+  g_bound_by_cmid[id] = BoundKey{ip, port, conn_id};
+}
+
+static bool takeBind_(rdma_cm_id* id, BoundKey* out) {
+  std::lock_guard<std::mutex> lk(g_bind_mu);
+  auto it = g_bound_by_cmid.find(id);
+  if (it == g_bound_by_cmid.end()) return false;
+  if (out) *out = it->second;
+  g_bound_by_cmid.erase(it);
+  return true;
+}
 } // namespace
 
 namespace hmc {
 
+uint16_t g_rdma_listen_port = 0;
+
 namespace {
 std::mutex g_meta_mu;
-std::unordered_map<uint16_t, std::deque<int>> g_pending_meta_fd;
+std::unordered_map<uint64_t, std::deque<int>> g_pending_meta_fd;
+std::unordered_map<uint64_t, std::string> g_peer_ip_by_conn;
+std::unordered_map<uint64_t, uint16_t> g_peer_port_by_conn;
 
-static void pushMetaFd_(uint16_t peer_data_port, int fd) {
+static void pushMetaFd_(uint64_t conn_id, int fd,
+                        const std::string &peer_ip,
+                        uint16_t client_rdma_port) {
   std::lock_guard<std::mutex> lk(g_meta_mu);
-  g_pending_meta_fd[peer_data_port].push_back(fd);
+  g_pending_meta_fd[conn_id].push_back(fd);
+  g_peer_ip_by_conn[conn_id] = peer_ip;
+  g_peer_port_by_conn[conn_id] = client_rdma_port;
 }
 
-static int popMetaFd_(uint16_t peer_data_port) {
+static int popMetaFd_(uint64_t conn_id,
+                      std::string *out_peer_ip,
+                      uint16_t *out_client_port) {
   std::lock_guard<std::mutex> lk(g_meta_mu);
-  auto it = g_pending_meta_fd.find(peer_data_port);
+  auto it = g_pending_meta_fd.find(conn_id);
   if (it == g_pending_meta_fd.end() || it->second.empty()) return -1;
   int fd = it->second.front();
   it->second.pop_front();
+  if (out_peer_ip) *out_peer_ip = g_peer_ip_by_conn[conn_id];
+  if (out_client_port) *out_client_port = g_peer_port_by_conn[conn_id];
   return fd;
 }
 } // namespace
@@ -131,20 +139,24 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
   int ret = -1;
   struct sockaddr_in sockaddr;
   struct rdma_cm_event *cm_event = nullptr;
-  struct sockaddr_in *client_addr = nullptr;
-  char recv_ip[INET_ADDRSTRLEN];
-  uint16_t recv_port = 0;
+
+  g_rdma_listen_port = port;
+  meta_port_ = static_cast<uint16_t>(port + 10000);
+
+  int opt = 1;
+  struct sockaddr_in meta_addr;
+  std::memset(&meta_addr, 0, sizeof(meta_addr));
 
   cm_event_channel = rdma_create_event_channel();
   if (!cm_event_channel) {
-    logError("Server::Start: Failed to create event channel");
+    logError("Server::listen: Failed to create event channel");
     return status_t::ERROR;
   }
 
   ret = rdma_create_id(this->cm_event_channel, &this->server_cm_id, nullptr,
                        RDMA_PS_TCP);
   if (ret) {
-    logError("Server::Start: Failed to create cm id");
+    logError("Server::listen: Failed to create cm id");
     goto cleanup;
   }
 
@@ -156,56 +168,48 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
   ret = rdma_bind_addr(this->server_cm_id,
                        reinterpret_cast<struct sockaddr *>(&sockaddr));
   if (ret) {
-    logError("Server::Start: Failed to bind address");
+    logError("Server::listen: Failed to bind address");
     goto cleanup;
   }
 
   ret = rdma_listen(this->server_cm_id, 16);
   if (ret) {
-    logError("Server::Start: Failed to listen");
+    logError("Server::listen: Failed to rdma_listen");
     goto cleanup;
   }
 
-  logInfo("Server::Start: Listening on %s:%d (max QPs per conn: %zu)", ip.c_str(),
-          port, num_qps_);
+  logInfo("Server::listen: Listening on %s:%u (max QPs per conn: %zu)",
+          ip.c_str(), port, num_qps_);
 
-  {
-    meta_port_ = static_cast<uint16_t>(port + 10000);
-    meta_listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (meta_listen_fd_ < 0) {
-      logError("Server::meta: socket() failed: %s", strerror(errno));
-      goto cleanup;
-    }
-
-    int opt = 1;
-    ::setsockopt(meta_listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
-
-    struct sockaddr_in meta_addr;
-    std::memset(&meta_addr, 0, sizeof(meta_addr));
-    meta_addr.sin_family = AF_INET;
-    meta_addr.sin_port = htons(meta_port_);
-    inet_pton(AF_INET, ip.c_str(), &meta_addr.sin_addr);
-
-    if (::bind(meta_listen_fd_,
-               reinterpret_cast<struct sockaddr *>(&meta_addr),
-               sizeof(meta_addr)) < 0) {
-      logError("Server::meta: bind %s:%u failed: %s", ip.c_str(), meta_port_,
-               strerror(errno));
-      ::close(meta_listen_fd_);
-      meta_listen_fd_ = -1;
-      goto cleanup;
-    }
-
-    if (::listen(meta_listen_fd_, 64) < 0) {
-      logError("Server::meta: listen() failed: %s", strerror(errno));
-      ::close(meta_listen_fd_);
-      meta_listen_fd_ = -1;
-      goto cleanup;
-    }
-
-    logInfo("Server::meta: Listening on %s:%u", ip.c_str(), meta_port_);
+  // meta listen socket
+  meta_listen_fd_ = ::socket(AF_INET, SOCK_STREAM, 0);
+  if (meta_listen_fd_ < 0) {
+    logError("Server::meta: socket() failed: %s", strerror(errno));
+    goto cleanup;
   }
 
+  ::setsockopt(meta_listen_fd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+
+  meta_addr.sin_family = AF_INET;
+  meta_addr.sin_port = htons(meta_port_);
+  inet_pton(AF_INET, ip.c_str(), &meta_addr.sin_addr);
+
+  if (::bind(meta_listen_fd_,
+             reinterpret_cast<struct sockaddr *>(&meta_addr),
+             sizeof(meta_addr)) < 0) {
+    logError("Server::meta: bind %s:%u failed: %s", ip.c_str(), meta_port_,
+             strerror(errno));
+    goto cleanup;
+  }
+
+  if (::listen(meta_listen_fd_, 64) < 0) {
+    logError("Server::meta: listen() failed: %s", strerror(errno));
+    goto cleanup;
+  }
+
+  logInfo("Server::meta: Listening on %s:%u", ip.c_str(), meta_port_);
+
+  // main loop
   while (!should_exit()) {
     if (rdma_get_cm_event(cm_event_channel, &cm_event)) continue;
 
@@ -213,73 +217,81 @@ status_t RDMAServer::listen(std::string ip, uint16_t port) {
     std::memcpy(&event_copy, cm_event, sizeof(*cm_event));
     rdma_ack_cm_event(cm_event);
 
-    if (event_copy.id->route.addr.src_addr.sa_family == AF_INET) {
-      client_addr = reinterpret_cast<struct sockaddr_in *>(
-          &event_copy.id->route.addr.src_addr);
-      recv_port = ntohs(client_addr->sin_port);
-      if (!inet_ntop(AF_INET, &(client_addr->sin_addr), recv_ip,
-                     INET_ADDRSTRLEN)) {
-        logError("Failed to parse client address");
-        continue;
-      }
-    } else {
-      logError("Unsupported address family (non-IPv4)");
-      continue;
-    }
-
     if (event_copy.event == RDMA_CM_EVENT_CONNECT_REQUEST) {
-      logInfo("Recv Connect msg from %s:%d", recv_ip, recv_port);
-
-      std::unique_ptr<hmc::RDMAEndpoint> ep = handleConnection(event_copy.id);
-      if (!ep) {
-        logError("Server::handleConnection failed for %s", recv_ip);
+      uint64_t conn_id = 0;
+      if (event_copy.param.conn.private_data &&
+          event_copy.param.conn.private_data_len >= sizeof(uint64_t)) {
+        uint64_t be = 0;
+        std::memcpy(&be, event_copy.param.conn.private_data, sizeof(be));
+        conn_id = be64toh(be);
+      }
+      if (conn_id == 0) {
+        logError("Server::CONNECT_REQUEST: missing/invalid conn_id in private_data");
+        rdma_reject(event_copy.id, nullptr, 0);
         continue;
       }
 
-      if (exchangeMetaData(recv_ip, recv_port, ep) != status_t::SUCCESS) {
-        logError("Server::exchangeMetaData failed for %s:%u", recv_ip, recv_port);
+      logInfo("Server::CONNECT_REQUEST: conn_id=%lu", conn_id);
+
+      std::unique_ptr<hmc::RDMAEndpoint> ep = handleConnection(event_copy.id, conn_id);
+      if (!ep) {
+        logError("Server::handleConnection failed (conn_id=%lu)", conn_id);
+        continue;
+      }
+
+      std::string peer_ip;
+      uint16_t client_rdma_port = 0;
+      uint16_t server_rdma_port = 0;
+
+      if (exchangeMetaData(conn_id, ep, &peer_ip, &client_rdma_port, &server_rdma_port) != status_t::SUCCESS) {
+        logError("Server::exchangeMetaData failed (conn_id=%lu)", conn_id);
         continue;
       }
 
       ep->transitionExtraQPsToRTS();
-      conn_manager->_addEndpoint(recv_ip, 0, std::move(ep), ConnType::RDMA);
-      logInfo("Server:: connection established with %s:%d", recv_ip, recv_port);
+      bindCmid_(event_copy.id, peer_ip, client_rdma_port, conn_id);
 
+      conn_manager->_removeEndpoint(peer_ip, client_rdma_port, ConnType::RDMA); // replace
+      conn_manager->_addEndpoint(peer_ip, client_rdma_port, std::move(ep), ConnType::RDMA);
+
+      logInfo("Server:: established: peer=%s client_rdma_port=%u server_rdma_port=%u conn_id=%lu",
+              peer_ip.c_str(), client_rdma_port, server_rdma_port, conn_id);
     } else if (event_copy.event == RDMA_CM_EVENT_DISCONNECTED) {
-      logInfo("Recv Disconnect msg from %s:%d", recv_ip, recv_port);
-      rdma_disconnect(event_copy.id);
-      conn_manager->_removeEndpoint(recv_ip, 0, ConnType::RDMA);
-      logInfo("Disconnect success for %s", recv_ip);
+      logInfo("Server::DISCONNECTED cm_id=%p", (void*)event_copy.id);
+      BoundKey key;
+      if (!takeBind_(event_copy.id, &key)) {
+        logError("Server::DISCONNECTED: cm_id not bound, ignore remove");
+        continue;
+      }
+      conn_manager->_removeEndpointIfMatch(key.ip, key.port, ConnType::RDMA, key.conn_id);
     }
   }
 
 cleanup:
-  if (cm_event_channel) {
-    rdma_destroy_event_channel(cm_event_channel);
-    cm_event_channel = nullptr;
-  }
-  if (server_cm_id) {
-    rdma_destroy_id(server_cm_id);
-    server_cm_id = nullptr;
-  }
   if (meta_listen_fd_ >= 0) {
     ::shutdown(meta_listen_fd_, SHUT_RDWR);
     ::close(meta_listen_fd_);
     meta_listen_fd_ = -1;
   }
-
+  if (server_cm_id) {
+    rdma_destroy_id(server_cm_id);
+    server_cm_id = nullptr;
+  }
+  if (cm_event_channel) {
+    rdma_destroy_event_channel(cm_event_channel);
+    cm_event_channel = nullptr;
+  }
   return status_t::SUCCESS;
 }
 
-std::unique_ptr<RDMAEndpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
+std::unique_ptr<RDMAEndpoint> RDMAServer::handleConnection(rdma_cm_id *id,
+                                                          uint64_t conn_id) {
   struct rdma_cm_event *cm_event = nullptr;
-
-  logDebug("buffer: buffer->ptr %p, buffer->size %zu", buffer->ptr,
-           buffer->buffer_size);
 
   auto endpoint = std::make_unique<RDMAEndpoint>(buffer, num_qps_);
   endpoint->role = EndpointType::Server;
   endpoint->cm_id = id;
+  endpoint->conn_id_ = conn_id;
 
   endpoint->completion_channel = ibv_create_comp_channel(endpoint->cm_id->verbs);
   if (!endpoint->completion_channel) {
@@ -334,7 +346,7 @@ std::unique_ptr<RDMAEndpoint> RDMAServer::handleConnection(rdma_cm_id *id) {
 
   rdma_ack_cm_event(cm_event);
   endpoint->connStatus = status_t::SUCCESS;
-  logInfo("Server:: connection established (QPs: %zu)", num_qps_);
+  logInfo("Server:: connection established (QPs: %zu, conn_id=%lu)", num_qps_, conn_id);
   return endpoint;
 
 failed:
@@ -342,37 +354,46 @@ failed:
   return nullptr;
 }
 
-status_t RDMAServer::exchangeMetaData(std::string ip,
-                                      uint16_t expected_peer_data_port,
-                                      std::unique_ptr<RDMAEndpoint> &endpoint) {
+status_t RDMAServer::exchangeMetaData(uint64_t expected_conn_id,
+                                      std::unique_ptr<RDMAEndpoint> &endpoint,
+                                      std::string *out_peer_ip,
+                                      uint16_t *out_client_rdma_port,
+                                      uint16_t *out_server_rdma_port) {
   if (meta_listen_fd_ < 0) {
     logError("[RDMAServer] exchangeMetaData: meta_listen_fd_ not ready");
     return status_t::ERROR;
   }
 
-  int fd = popMetaFd_(expected_peer_data_port);
+  std::string peer_ip;
+  uint16_t client_rdma_port = 0;
+  int fd = popMetaFd_(expected_conn_id, &peer_ip, &client_rdma_port);
 
   while (fd < 0) {
-    std::string peer_ip;
-    int newfd = acceptOnce(meta_listen_fd_, &peer_ip);
+    std::string ip;
+    int newfd = acceptOnce(meta_listen_fd_, &ip);
     if (newfd < 0) {
       logError("[RDMAServer] exchangeMetaData: acceptOnce failed: %s",
                strerror(errno));
       return status_t::ERROR;
     }
 
-    uint16_t peer_data_port = 0;
-    if (!recvU16(newfd, peer_data_port)) {
+    MetaHello hello{};
+    if (!recvAll(newfd, &hello, sizeof(hello))) {
       ::shutdown(newfd, SHUT_RDWR);
       ::close(newfd);
-      logError("[RDMAServer] exchangeMetaData: recv peer_data_port failed");
+      logError("[RDMAServer] exchangeMetaData: recv MetaHello failed");
       continue;
     }
 
-    pushMetaFd_(peer_data_port, newfd);
-    fd = popMetaFd_(expected_peer_data_port);
+    const uint64_t conn_id = be64toh(hello.conn_id_be);
+    const uint16_t cport = ntohs(hello.client_port_be);
+
+    pushMetaFd_(conn_id, newfd, ip, cport);
+
+    fd = popMetaFd_(expected_conn_id, &peer_ip, &client_rdma_port);
   }
 
+  // recv client metadata struct
   decltype(endpoint->remote_metadata_attr) client_meta{};
   {
     hmc::CtrlMsgHeader hdr{};
@@ -389,6 +410,18 @@ status_t RDMAServer::exchangeMetaData(std::string ip,
   }
   endpoint->remote_metadata_attr = client_meta;
 
+  // send MetaReply(conn_id + server_rdma_port)
+  MetaReply reply{};
+  reply.conn_id_be = htobe64(expected_conn_id);
+  reply.server_port_be = htons(g_rdma_listen_port);
+  if (!sendAll(fd, &reply, sizeof(reply))) {
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+    logError("[RDMAServer] exchangeMetaData: send MetaReply failed");
+    return status_t::ERROR;
+  }
+
+  // send server metadata struct
   if (!sendMsg(fd, hmc::CtrlMsgType::CTRL_STRUCT,
                &endpoint->local_metadata_attr,
                sizeof(endpoint->local_metadata_attr))) {
@@ -408,16 +441,14 @@ status_t RDMAServer::exchangeMetaData(std::string ip,
     return status_t::ERROR;
   }
 
-  logInfo("[RDMAServer] exchangeMetaData: local_qps=%u, remote_qps=%u",
+  if (out_peer_ip) *out_peer_ip = peer_ip;
+  if (out_client_rdma_port) *out_client_rdma_port = client_rdma_port;
+  if (out_server_rdma_port) *out_server_rdma_port = g_rdma_listen_port;
+
+  logInfo("[RDMAServer] exchangeMetaData: conn_id=%lu peer=%s client_rdma_port=%u server_rdma_port=%u local_qps=%u remote_qps=%u",
+          expected_conn_id, peer_ip.c_str(), client_rdma_port, g_rdma_listen_port,
           endpoint->local_metadata_attr.qp_nums,
           endpoint->remote_metadata_attr.qp_nums);
-
-  for (uint32_t i = 0; i < endpoint->local_metadata_attr.qp_nums; ++i)
-    logDebug("  local QP[%u] num = %u", i,
-             endpoint->local_metadata_attr.qp_num_list[i]);
-  for (uint32_t i = 0; i < endpoint->remote_metadata_attr.qp_nums; ++i)
-    logDebug("  remote QP[%u] num = %u", i,
-             endpoint->remote_metadata_attr.qp_num_list[i]);
 
   return status_t::SUCCESS;
 }

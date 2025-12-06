@@ -74,6 +74,8 @@ public:
   void *ptr = nullptr;       ///< Pointer to allocated memory
   size_t buffer_size;        ///< Buffer size in bytes
   Memory *mem_ops = nullptr; ///< Associated memory operator
+  MemoryType mem_type;
+  int device_id;
 
   ConnBuffer(int device_id, size_t buffer_size,
              MemoryType mem_type = MemoryType::DEFAULT);
@@ -311,7 +313,7 @@ public:
   status_t sendDataTo(std::string ip, uint16_t port, void *send_buf, size_t buf_size,
                       MemoryType buf_type, ConnType connType = ConnType::RDMA);
 
-  status_t recvDataFrom(std::string ip, void *recv_buf, size_t buf_size,
+  status_t recvDataFrom(std::string ip, uint16_t port, void *recv_buf, size_t buf_size,
                         MemoryType buf_type, size_t *flag,
                         ConnType connType = ConnType::RDMA);
 

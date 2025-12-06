@@ -9,6 +9,8 @@
 
 namespace hmc {
 
+uint16_t g_ucx_listen_port = 0;
+
 static constexpr std::uint16_t kHandshakeChannel = 1;
 static constexpr std::uint32_t kSeqHdr  = 1;
 static constexpr std::uint32_t kSeqRkey = 2;
@@ -64,8 +66,10 @@ UCXServer::UCXServer(std::shared_ptr<ConnManager> conn_manager,
 UCXServer::~UCXServer() { (void)stopListen(); }
 
 status_t UCXServer::listen(std::string ip, uint16_t port) {
-  ip_ = std::move(ip);
+  ip_ = ip;
   port_ = port;
+
+  g_ucx_listen_port = port;
 
   if (running_) return status_t::SUCCESS;
 
@@ -169,10 +173,11 @@ status_t UCXServer::listen(std::string ip, uint16_t port) {
         continue;
       }
 
-      conn_manager->_addEndpoint(peer_ip, 0, std::unique_ptr<Endpoint>(endpoint.release()), ConnType::UCX);
+      // 对端的 ip + listen port 作为 key, 链接唯一
+      conn_manager->_addEndpoint(peer_ip, remote_hdr.listen_port, std::unique_ptr<Endpoint>(endpoint.release()), ConnType::UCX);
 
-      logInfo("UCXServer established with %s remote_base=0x%llx remote_size=%llu rkey_len=%u",
-              peer_ip.c_str(),
+      logInfo("UCXServer established with %s port=%u remote_base=0x%llx remote_size=%llu rkey_len=%u",
+              peer_ip.c_str(), remote_hdr.listen_port,
               (unsigned long long)remote_hdr.base_addr,
               (unsigned long long)remote_hdr.size,
               remote_hdr.rkey_len);

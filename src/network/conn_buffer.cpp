@@ -7,7 +7,7 @@
 namespace hmc {
 
 ConnBuffer::ConnBuffer(int device_id, size_t buffer_size, MemoryType mem_type)
-    : buffer_size(buffer_size) {
+    : device_id(device_id), buffer_size(buffer_size), mem_type(mem_type) {
   mem_ops = new Memory(device_id, mem_type);
   mem_ops->allocatePeerableBuffer(&ptr, buffer_size);
 }

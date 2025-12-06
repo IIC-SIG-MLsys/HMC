@@ -180,14 +180,14 @@ status_t Communicator::sendDataTo(std::string ip, uint16_t port, void *send_buf,
       });
 }
 
-status_t Communicator::recvDataFrom(std::string ip, void *recv_buf, size_t buf_size,
+status_t Communicator::recvDataFrom(std::string ip, uint16_t port, void *recv_buf, size_t buf_size,
                                     MemoryType buf_type, size_t *flag,
                                     ConnType connType) {
   status_t sret = checkConn(ip, 0, connType);
   if (sret != status_t::SUCCESS) return sret;
 
   return conn_manager->withEndpoint(
-      ip, 0, connType, [recv_buf, buf_size, flag, buf_type](Endpoint *ep) -> status_t {
+      ip, port, connType, [recv_buf, buf_size, flag, buf_type](Endpoint *ep) -> status_t {
         if (!ep) return status_t::ERROR;
         return ep->uhm_recv(recv_buf, buf_size, flag, buf_type);
       });

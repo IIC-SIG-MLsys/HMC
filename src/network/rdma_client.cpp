@@ -1,8 +1,3 @@
-/**
- * @copyright
- * Copyright (c) 2025,
- * SDU spgroup Holding Limited. All rights reserved.
- */
 #include "net_rdma.h"
 #include <hmc.h>
 
@@ -10,10 +5,12 @@
 #include <cerrno>
 #include <chrono>
 #include <cstring>
+#include <random>
 #include <sys/socket.h>
 #include <thread>
 #include <unistd.h>
 #include <vector>
+#include <endian.h>
 
 namespace {
 
@@ -38,8 +35,6 @@ bool recvAll(int fd, void* buf, size_t len) {
   }
   return true;
 }
-
-bool sendU16(int fd, uint16_t v) { return sendAll(fd, &v, sizeof(v)); }
 
 bool sendMsg(int fd, hmc::CtrlMsgType type, const void* payload, size_t len,
              uint16_t flags = 0) {
@@ -75,6 +70,15 @@ int dialOnce(const std::string& ip, uint16_t port) {
   return fd;
 }
 
+uint64_t genConnId64() {
+  std::random_device rd;
+  std::mt19937_64 eng(rd());
+  std::uniform_int_distribution<uint64_t> dist;
+  uint64_t v = dist(eng);
+  if (v == 0) v = 1;
+  return v;
+}
+
 } // namespace
 
 namespace hmc {
@@ -96,16 +100,20 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
   int ret = -1;
   struct rdma_cm_event* cm_event = nullptr;
   struct rdma_conn_param conn_param;
+  uint64_t conn_id_be = 0;
 
   std::memset(&sockaddr, 0, sizeof(sockaddr));
   sockaddr.sin_family = AF_INET;
   sockaddr.sin_port = htons(port);
   if (inet_pton(AF_INET, ip.c_str(), &sockaddr.sin_addr) <= 0) {
-    logError("Client::Start: Failed to convert IP address");
+    logError("Client::connect: Failed to convert IP address");
+    return nullptr;
   }
 
   auto endpoint = std::make_unique<RDMAEndpoint>(buffer, num_qps_);
   endpoint->role = EndpointType::Client;
+
+  endpoint->conn_id_ = genConnId64();
 
   this->retry_count = 0;
 
@@ -194,6 +202,10 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     conn_param.initiator_depth = endpoint->initiator_depth;
     conn_param.retry_count = endpoint->retry_count;
 
+    conn_id_be = htobe64(endpoint->conn_id_);
+    conn_param.private_data = &conn_id_be;
+    conn_param.private_data_len = sizeof(conn_id_be);
+
     if (rdma_connect(endpoint->cm_id, &conn_param)) {
       logError("Client::connect: Failed to connect to server");
       goto retry;
@@ -211,20 +223,25 @@ std::unique_ptr<Endpoint> RDMAClient::connect(std::string ip, uint16_t port) {
     }
     rdma_ack_cm_event(cm_event);
 
-    logInfo("Client:: Connected to %s:%d (QPs: %zu)", ip.c_str(), port, num_qps_);
+    logInfo("Client:: Connected to %s:%d (QPs: %zu, conn_id=%lu)",
+            ip.c_str(), port, num_qps_, endpoint->conn_id_);
 
-    if (exchangeMetaData(ip, port, endpoint) != status_t::SUCCESS) goto failed;
+    if (exchangeMetaData(ip, port, endpoint) != status_t::SUCCESS)
+      goto failed;
 
     endpoint->transitionExtraQPsToRTS();
     endpoint->connStatus = status_t::SUCCESS;
-    logInfo("Client:: Connection established successfully");
+
+    logInfo("Client:: Connection established successfully (server_rdma_port=%u)",
+            port);
     return endpoint;
 
   retry:
     this->retry_count++;
     logError("Client:: Retry to connect server (%d/%d)", this->retry_count,
              this->max_retry_times);
-    std::this_thread::sleep_for(std::chrono::milliseconds(this->retry_delay_ms));
+    std::this_thread::sleep_for(
+        std::chrono::milliseconds(this->retry_delay_ms));
     endpoint->cleanRdmaResources();
     if (should_exit()) break;
   }
@@ -234,9 +251,9 @@ failed:
   return nullptr;
 }
 
-status_t RDMAClient::exchangeMetaData(std::string ip, uint16_t port,
+status_t RDMAClient::exchangeMetaData(std::string ip, uint16_t server_rddp_port,
                                       std::unique_ptr<RDMAEndpoint>& endpoint) {
-  uint16_t meta_port = static_cast<uint16_t>(port + 10000);
+  const uint16_t meta_port = static_cast<uint16_t>(server_rddp_port + 10000);
 
   int fd = dialOnce(ip, meta_port);
   if (fd < 0) {
@@ -245,11 +262,13 @@ status_t RDMAClient::exchangeMetaData(std::string ip, uint16_t port,
     return status_t::ERROR;
   }
 
-  const uint16_t local_data_port = port;
-  if (!sendU16(fd, local_data_port)) {
+  MetaHello hello{};
+  hello.conn_id_be = htobe64(endpoint->conn_id_);
+  hello.client_port_be = htons(g_rdma_listen_port); // client-side processer's rdma port
+  if (!sendAll(fd, &hello, sizeof(hello))) {
     ::shutdown(fd, SHUT_RDWR);
     ::close(fd);
-    logError("[RDMAClient] exchangeMetaData: send local_data_port failed");
+    logError("[RDMAClient] exchangeMetaData: send MetaHello failed");
     return status_t::ERROR;
   }
 
@@ -258,6 +277,24 @@ status_t RDMAClient::exchangeMetaData(std::string ip, uint16_t port,
     ::shutdown(fd, SHUT_RDWR);
     ::close(fd);
     logError("[RDMAClient] exchangeMetaData: send local metadata failed");
+    return status_t::ERROR;
+  }
+
+  MetaReply reply{};
+  if (!recvAll(fd, &reply, sizeof(reply))) {
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+    logError("[RDMAClient] exchangeMetaData: recv MetaReply failed");
+    return status_t::ERROR;
+  }
+  const uint64_t reply_conn_id = be64toh(reply.conn_id_be);
+  const uint16_t server_rdma_port = ntohs(reply.server_port_be);
+
+  if (reply_conn_id != endpoint->conn_id_) {
+    ::shutdown(fd, SHUT_RDWR);
+    ::close(fd);
+    logError("[RDMAClient] exchangeMetaData: conn_id mismatch (got=%lu expect=%lu)",
+             reply_conn_id, endpoint->conn_id_);
     return status_t::ERROR;
   }
 
@@ -287,16 +324,10 @@ status_t RDMAClient::exchangeMetaData(std::string ip, uint16_t port,
     return status_t::ERROR;
   }
 
-  logInfo("[RDMAClient] exchangeMetaData: local_qps=%u, remote_qps=%u",
+  logInfo("[RDMAClient] exchangeMetaData: conn_id=%lu server_rdma_port=%u local_qps=%u remote_qps=%u",
+          endpoint->conn_id_, server_rdma_port,
           endpoint->local_metadata_attr.qp_nums,
           endpoint->remote_metadata_attr.qp_nums);
-
-  for (uint32_t i = 0; i < endpoint->local_metadata_attr.qp_nums; ++i)
-    logDebug("  local QP[%u] num = %u", i,
-             endpoint->local_metadata_attr.qp_num_list[i]);
-  for (uint32_t i = 0; i < endpoint->remote_metadata_attr.qp_nums; ++i)
-    logDebug("  remote QP[%u] num = %u", i,
-             endpoint->remote_metadata_attr.qp_num_list[i]);
 
   return status_t::SUCCESS;
 }

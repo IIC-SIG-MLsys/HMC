@@ -94,6 +94,7 @@ std::unique_ptr<Endpoint> UCXClient::connect(std::string ip, uint16_t port) {
     endpoint->closeEndpoint();
     return nullptr;
   }
+  local_hdr.listen_port = g_ucx_listen_port;
 
   // send hdr -> recv hdr
   if (endpoint->tagSend(&local_hdr, sizeof(local_hdr), ch, /*seq=*/1) != status_t::SUCCESS) {

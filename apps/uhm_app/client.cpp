@@ -28,7 +28,7 @@ std::string server_ip;
 std::string client_ip;
 std::string tcp_server_ip;
 
-size_t buffer_size = 1024ULL * 1024 * 128;
+size_t buffer_size = 1024ULL * 1024 * 128; // max 32 for MLU
 const int device_id = 0;
 const int g_port = 2025;
 const int ctrl_port = 2027;
@@ -242,7 +242,13 @@ void send_channel_slice_ucx(Context ctx) {
   auto start = steady_clock_t::now();
 
   // just for time calcu
-  if (gpu_buffer->writeFromCpu(ctx.gpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+  if (gpu_buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    LOG(ERROR) << "[UCX] writeFromCpu failed.";
+    return;
+  }
+
+  if (buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UCX] writeFromCpu failed.";
     return;

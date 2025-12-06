@@ -17,30 +17,24 @@ def main():
     ip = pick_ip()
     base = int(os.environ.get("HMC_BASE_PORT", "25000"))
 
-    port_ucx = base + rank
-    port_rdma = base + 1000 + rank
+    port_ucx = base + rank # 要用节点内的rank，而不是全局rank
+    port_rdma = base + 1000 + rank # 要用节点内的rank，而不是全局rank
     # ctrl tcp port must be unique per rank on same host
     ctrl_tcp_port = int(os.environ.get("HMC_CTRL_TCP_PORT", str(base + 2000))) + rank
 
     sess = hmc.create_session(
         device_id=int(os.environ.get("LOCAL_RANK", "0")),
-        buffer_size=64 * 1024 * 1024,
-        mem_type=hmc.MemoryType.CPU,
-        num_chs=1,
+        buffer_size=64 * 1024 * 1024, # 根据要业务要交换的参数矩阵的最大大小创建
+        mem_type=hmc.MemoryType.CPU, # 根据业务的交换的矩阵的类型决定
     )
 
     g = hmc.collective.init_group(
         session=sess,
-        group_id="ut",
         my_ip=ip,
         port_ucx=port_ucx,
         port_rdma=port_rdma,
         port_ctrl=ctrl_tcp_port,
-        mem_type=hmc.MemoryType.CPU,
-        device_id=int(os.environ.get("LOCAL_RANK", "0")),
-        num_chs=1,
-        start_servers=True,
-        server_barrier=True,
+        group_id="ut",
     )
 
     dist.barrier()
@@ -67,8 +61,9 @@ def main():
         send,
         recv,
         algo="direct",
-        conn=hmc.ConnType.RDMA,
-        # conn="auto",
+        # algo="ring",
+        # conn=hmc.ConnType.RDMA,
+        conn="auto",
         chunk_bytes=4 * 1024 * 1024,
         do_self_copy=True,
     )

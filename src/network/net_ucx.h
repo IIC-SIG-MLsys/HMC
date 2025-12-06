@@ -19,7 +19,10 @@ struct UcxRemoteMemInfo {
   std::uint64_t base_addr{0}; 
   std::uint64_t size{0}; 
   std::uint32_t rkey_len{0};
+  std::uint16_t listen_port{0};
+  std::uint16_t reserved{0};
 };
+static_assert(sizeof(UcxRemoteMemInfo) % 8 == 0);
 
 struct UcxRequest {
   std::atomic<bool> completed{false};
@@ -168,6 +171,7 @@ private:
   std::atomic<std::uint64_t> next_wrid_{1};
 };
 
+extern uint16_t g_ucx_listen_port;
 
 class UCXServer : public Server {
 public:

@@ -18,7 +18,6 @@ class GroupMember:
     mem_type: int
     device_id: int
     buffer_size: int
-    num_chs: int = 1
 
     @property
     def memory_type(self) -> MemoryType:
@@ -38,7 +37,6 @@ class GroupMember:
             "mem_type": int(self.mem_type),
             "device_id": int(self.device_id),
             "buffer_size": int(self.buffer_size),
-            "num_chs": int(self.num_chs),
         }
 
     @classmethod
@@ -53,7 +51,6 @@ class GroupMember:
             mem_type=int(d["mem_type"]),
             device_id=int(d["device_id"]),
             buffer_size=int(d["buffer_size"]),
-            num_chs=int(d.get("num_chs", 1)),
         )
 
 
@@ -92,16 +89,13 @@ class Group:
 def init_group(
     *,
     session: Session,
+    my_ip: str, # "127.0.0.1"
+    port_ucx: int,
+    port_rdma: int,
+    port_ctrl: int,
     group_id: str = "default",
-    my_ip: str = "127.0.0.1",
-    port_ucx: int = 0,
-    port_rdma: int = 0,
-    port_ctrl: int = 0,
     ctrl_tcp_port: Optional[int] = None,
     ctrl_uds_dir: str = "/tmp",
-    mem_type: MemoryType = MemoryType.CPU,
-    device_id: int = 0,
-    num_chs: int = 1,
     start_servers: bool = True,
     server_barrier: bool = True,
 ) -> Group:
@@ -120,10 +114,9 @@ def init_group(
         port_ucx=int(port_ucx),
         port_rdma=int(port_rdma),
         port_ctrl=int(port_ctrl),
-        mem_type=int(mem_type),
-        device_id=int(device_id),
+        mem_type=session.buf.mem_type,
+        device_id=int(session.buf.device_id),
         buffer_size=int(session.buf.size),
-        num_chs=int(num_chs),
     )
 
     gathered: list[Optional[dict[str, Any]]] = [None for _ in range(world)]
@@ -291,7 +284,6 @@ def _get_chunked(
         )
         moved += n
 
-
 def _direct_alltoall_core(
     group: Group,
     *,
@@ -306,18 +298,35 @@ def _direct_alltoall_core(
     r = int(group.rank)
     w = int(group.world)
 
+    import torch.distributed as dist  # type: ignore
+
     if w <= 1:
-        _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+        _copy_self_if_needed(
+            group,
+            send_base=send_base,
+            recv_base=recv_base,
+            bytes_per_peer=bytes_per_peer,
+            do_self_copy=do_self_copy,
+        )
         return
 
-    # connect to all peers (may vary per peer if conn="auto")
-    for peer in range(w):
-        if peer == r:
-            continue
-        c = _conn_for_pair(group, r, peer, conn)
-        _connect_peer(group, peer, c)
+    # 分轮次，小rank连大rank
+    for s in range(1, w):
+        peer = (r + s) % w
+        if r < peer:
+            c = _conn_for_pair(group, r, peer, conn)
+            _connect_peer(group, peer, c)
+        dist.barrier()
 
-    _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+    print("all connections are ok")
+
+    _copy_self_if_needed(
+        group,
+        send_base=send_base,
+        recv_base=recv_base,
+        bytes_per_peer=bytes_per_peer,
+        do_self_copy=do_self_copy,
+    )
 
     for dst in range(w):
         if dst == r:
@@ -342,7 +351,6 @@ def _direct_alltoall_core(
             conn=c,
         )
 
-    import torch.distributed as dist  # type: ignore
     dist.barrier()
 
 
@@ -360,8 +368,16 @@ def _ring_alltoall_core(
     r = int(group.rank)
     w = int(group.world)
 
+    import torch.distributed as dist  # type: ignore
+
     if w <= 1:
-        _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+        _copy_self_if_needed(
+            group,
+            send_base=send_base,
+            recv_base=recv_base,
+            bytes_per_peer=bytes_per_peer,
+            do_self_copy=do_self_copy,
+        )
         return
 
     right_rank = int(group.right.rank)
@@ -370,15 +386,25 @@ def _ring_alltoall_core(
     conn_right = _conn_for_pair(group, r, right_rank, conn)
     conn_left = _conn_for_pair(group, r, left_rank, conn)
 
-    _connect_peer(group, right_rank, conn_right)
-    _connect_peer(group, left_rank, conn_left)
+    _connect_peer(group, right_rank, conn_right) # 双工链路，只连一次就行
+    dist.barrier()
 
     right = group.peer(right_rank)
     left = group.peer(left_rank)
-    right_ip, right_port = str(right.ip), int(right.port_for(conn_right))
-    left_ip, left_port = str(left.ip), int(left.port_for(conn_left))
 
-    _copy_self_if_needed(group, send_base=send_base, recv_base=recv_base, bytes_per_peer=bytes_per_peer, do_self_copy=do_self_copy)
+    right_ip = str(right.ip)
+    right_port = int(right.port_for(conn_right))
+
+    left_ip = str(left.ip)
+    left_port = int(left.port_for(conn_left))
+
+    _copy_self_if_needed(
+        group,
+        send_base=send_base,
+        recv_base=recv_base,
+        bytes_per_peer=bytes_per_peer,
+        do_self_copy=do_self_copy,
+    )
 
     for s in range(1, w):
         send_peer = (r - s + w) % w
@@ -403,6 +429,7 @@ def _ring_alltoall_core(
                 nbytes=int(n),
                 conn=conn_left,
             )
+
             # me.send[send_peer] -> right.recv[recv_peer]
             sess.put_remote(
                 right_ip,
@@ -419,7 +446,6 @@ def _ring_alltoall_core(
         tag = sess.ctrl_recv(left_rank)
         if int(tag) != int(s):
             raise RuntimeError(f"ring step tag mismatch: expect={s} got={tag}")
-
 
 def alltoall(
     group: Group,

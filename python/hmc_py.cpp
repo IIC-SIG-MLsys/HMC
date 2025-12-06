@@ -105,6 +105,14 @@ PYBIND11_MODULE(hmc, m) {
                              [](const hmc::ConnBuffer &self) {
                                return self.buffer_size;
                              })
+      .def_property_readonly("mem_type",
+                             [](const hmc::ConnBuffer &self) {
+                               return self.mem_type;
+                             })
+      .def_property_readonly("device_id",
+                             [](const hmc::ConnBuffer &self) {
+                               return self.device_id;
+                             })
 
       .def(
           "writeFromCpu",
@@ -243,7 +251,7 @@ PYBIND11_MODULE(hmc, m) {
 
       // recvDataFrom remains (ip, recv_buf, ...) per your new class definition
       .def("recvDataFrom", &hmc::Communicator::recvDataFrom,
-           py::arg("ip"),
+           py::arg("ip"), py::arg("port"),
            py::arg("recv_buf"), py::arg("buf_size"), py::arg("buf_type"),
            py::arg("flag"),
            py::arg("connType") = hmc::ConnType::RDMA)

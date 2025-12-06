@@ -26,63 +26,51 @@
 #include <rdma/rdma_cma.h>
 #include <vector>
 #include <mutex>
+#include <atomic>
+#include <cstdint>
 
-#define MAX_QPS 16  ///< Maximum supported number of queue pairs per endpoint
+#define MAX_QPS 16
 
 namespace hmc {
 
-/* -------------------------------------------------------------------------- */
-/*                            UHM Buffer Structures                           */
-/* -------------------------------------------------------------------------- */
+/**
+ * @brief meta 通道用的握手包：用 conn_id 做并发连接匹配。
+ * 所有字段按网络字节序传输（big endian）。
+ */
+struct __attribute__((packed)) MetaHello {
+  uint64_t conn_id_be;        // htobe64(conn_id)
+  uint16_t client_port_be;    // htons(client_rdma_port)
+};
+
+struct __attribute__((packed)) MetaReply {
+  uint64_t conn_id_be;        // htobe64(conn_id) for validation
+  uint16_t server_port_be;    // htons(server_rdma_port)
+};
 
 #define UHM_STATE_TYPE uint32_t
-
-/**
- * @enum UHMBufferStateType
- * @brief Flags for two-buffer RDMA streaming state synchronization.
- */
 typedef enum {
-  UHM_BUFFER_CAN_WRITE = 0, ///< Indicates the sender can write to the buffer
-  UHM_BUFFER_CAN_READ = 1,  ///< Indicates the receiver can read from the buffer
-  UHM_BUFFER_FINISHED = 2   ///< Indicates the data transfer is complete
+  UHM_BUFFER_CAN_WRITE = 0,
+  UHM_BUFFER_CAN_READ = 1,
+  UHM_BUFFER_FINISHED = 2
 } UHMBufferStateType;
 
-/**
- * @struct UHMBufferState
- * @brief Shared buffer state structure for user-hosted memory (UHM) protocol.
- */
 struct __attribute__((packed)) UHMBufferState {
-  volatile UHM_STATE_TYPE state[2]; ///< State for two half-buffers (ping-pong)
-  volatile UHM_STATE_TYPE length;   ///< Data length field for current transfer
+  volatile UHM_STATE_TYPE state[2];
+  volatile UHM_STATE_TYPE length;
 };
 
-/**
- * @struct rdma_buffer_attr
- * @brief Metadata for RDMA buffer registration and multi-QP exchange.
- */
 struct __attribute__((packed)) rdma_buffer_attr {
-  uint64_t address;                         ///< Base address of data buffer
-  uint32_t length;                          ///< Buffer length in bytes
-  uint32_t key;                             ///< Local memory region (MR) key
-  uint64_t uhm_buffer_state_address;        ///< Address of buffer state struct
-  uint32_t uhm_buffer_state_key;            ///< MR key for state struct
-  uint32_t qp_nums;                         ///< Number of queue pairs in use
-  uint32_t qp_num_list[MAX_QPS];            ///< List of QP numbers exchanged
-  uint8_t  gid[16];       // 对端/本端 GID（RoCEv2）
-  uint8_t  sgid_index;    // 本端使用的 sgid index（一般 0 或 1）
+  uint64_t address;
+  uint32_t length;
+  uint32_t key;
+  uint64_t uhm_buffer_state_address;
+  uint32_t uhm_buffer_state_key;
+  uint32_t qp_nums;
+  uint32_t qp_num_list[MAX_QPS];
+  uint8_t  gid[16];
+  uint8_t  sgid_index;
 };
 
-/* -------------------------------------------------------------------------- */
-/*                               RDMA Endpoint                                */
-/* -------------------------------------------------------------------------- */
-
-/**
- * @class RDMAEndpoint
- * @brief Represents one RDMA connection endpoint with support for multiple QPs.
- *
- * Each endpoint maintains its own protection domain, completion queue,
- * memory regions, and queue pairs. Multiple QPs allow concurrent operations.
- */
 class RDMAEndpoint : public Endpoint {
 public:
   RDMAEndpoint(std::shared_ptr<ConnBuffer> buffer, size_t num_qps = 1);
@@ -90,12 +78,10 @@ public:
 
   status_t closeEndpoint() override;
 
-  /* QP Management */
-  status_t setupQPs();                   ///< Create and initialize multiple QPs
-  ibv_qp* getQP(size_t idx);             ///< Select a QP by index (round-robin)
+  status_t setupQPs();
+  ibv_qp* getQP(size_t idx);
   status_t transitionExtraQPsToRTS();
 
-  /* Data Transfer */
   status_t writeData(size_t local_off, size_t remote_off, size_t size) override;
   status_t readData(size_t local_off, size_t remote_off, size_t size) override;
 
@@ -104,22 +90,19 @@ public:
 
   status_t waitWrId(uint64_t wr_id) override;
   status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
-                                     std::chrono::milliseconds timeout = std::chrono::seconds(5));
+                         std::chrono::milliseconds timeout = std::chrono::seconds(5));
 
-  /* User-hosted memory (UHM) send/receive */
   status_t uhm_send(void *input_buffer, const size_t send_flags,
                     MemoryType mem_type) override;
   status_t uhm_recv(void *output_buffer, const size_t buffer_size,
                     size_t *recv_flags, MemoryType mem_type) override;
 
-  /* Memory Management */
   status_t registerMemory(void *addr, size_t length, struct ibv_mr **mr);
   status_t deRegisterMemory(struct ibv_mr *mr);
   status_t setupBuffers();
   void showRdmaBufferAttr(const struct rdma_buffer_attr *attr);
   void cleanRdmaResources();
 
-  /* Low-level RDMA operations */
   status_t postSend(void *addr, size_t length, struct ibv_mr *mr,
                     uint64_t wr_id, bool signaled = true, size_t qp_idx = 0);
   status_t postRecv(void *addr, size_t length, struct ibv_mr *mr,
@@ -132,29 +115,29 @@ public:
                     uint64_t wr_id, bool signaled, size_t qp_idx = 0);
 
 public:
-  size_t num_qps_ = 1;                          ///< Number of queue pairs
-  std::shared_ptr<ConnBuffer> buffer;           ///< Shared communication buffer
+  size_t num_qps_ = 1;
+  std::shared_ptr<ConnBuffer> buffer;
   bool is_buffer_ok = false;
-  status_t connStatus = status_t::ERROR;        ///< Connection state
+  status_t connStatus = status_t::ERROR;
 
-  struct rdma_cm_id *cm_id = NULL;              ///< RDMA connection identifier
-  struct ibv_qp_init_attr qp_init_attr;         ///< QP initialization attributes
-  std::vector<ibv_qp*> qps_;                    ///< Multiple QPs per endpoint
-  std::mutex qp_select_mu_;                     ///< Protect round-robin QP access
+  struct rdma_cm_id *cm_id = NULL;
+  struct ibv_qp_init_attr qp_init_attr;
+  std::vector<ibv_qp*> qps_;
+  std::mutex qp_select_mu_;
 
-  struct ibv_pd *pd = NULL;                     ///< Protection domain
-  struct ibv_cq *cq = NULL;                     ///< Completion queue
-  struct ibv_mr *remote_metadata_mr = NULL;     ///< Remote metadata MR
-  struct ibv_mr *local_metadata_mr = NULL;      ///< Local metadata MR
-  struct ibv_mr *buffer_mr = NULL;              ///< Main data buffer MR
-  struct ibv_mr *uhm_buffer_state_mr = NULL;    ///< Buffer state MR
+  struct ibv_pd *pd = NULL;
+  struct ibv_cq *cq = NULL;
+  struct ibv_mr *remote_metadata_mr = NULL;
+  struct ibv_mr *local_metadata_mr = NULL;
+  struct ibv_mr *buffer_mr = NULL;
+  struct ibv_mr *uhm_buffer_state_mr = NULL;
 
-  struct rdma_buffer_attr remote_metadata_attr; ///< Remote buffer attributes
-  struct rdma_buffer_attr local_metadata_attr;  ///< Local buffer attributes
-  struct UHMBufferState uhm_buffer_state;       ///< Shared UHM state object
+  struct rdma_buffer_attr remote_metadata_attr;
+  struct rdma_buffer_attr local_metadata_attr;
+  struct UHMBufferState uhm_buffer_state;
 
-  struct rdma_event_channel *cm_event_channel = NULL; ///< RDMA event channel
-  struct ibv_comp_channel *completion_channel = NULL; ///< Completion channel
+  struct rdma_event_channel *cm_event_channel = NULL;
+  struct ibv_comp_channel *completion_channel = NULL;
 
   uint8_t initiator_depth = 8;
   uint8_t responder_resources = 8;
@@ -163,33 +146,30 @@ public:
   uint16_t cq_capacity = 16;
   uint16_t max_sge = 2;
   uint16_t max_wr = 8;
-  // ConnectX-5
-  // max_qp_wr  = 32768
-  // max_cqe    = 4194303
 
-  uint8_t port_num_      = 1;  // HCA 端口
+  uint8_t port_num_      = 1;
   uint8_t sgid_index_    = 1;
   uint8_t grh_hop_limit_ = 1;
+
+  uint64_t conn_id_ = 0;
 
 private:
   std::atomic<uint64_t> next_wr_id_{1};
 };
 
-/* -------------------------------------------------------------------------- */
-/*                                RDMA Server                                 */
-/* -------------------------------------------------------------------------- */
+/* -------------------------------- Server -------------------------------- */
+extern uint16_t g_rdma_listen_port;
 
 class RDMAServer : public Server {
 public:
   RDMAServer(std::shared_ptr<ConnBuffer> buffer,
              std::shared_ptr<ConnManager> conn_manager,
              size_t num_qps = 1);
-
   ~RDMAServer();
 
   status_t listen(std::string ip, uint16_t port) override;
-  std::unique_ptr<RDMAEndpoint> handleConnection(rdma_cm_id *id);
-
+  std::unique_ptr<RDMAEndpoint> handleConnection(rdma_cm_id *id,
+                                                 uint64_t conn_id);
   status_t stopListen() override;
 
 private:
@@ -201,14 +181,12 @@ private:
   int meta_listen_fd_ = -1;
   uint16_t meta_port_ = 0;
 
-  status_t exchangeMetaData(std::string ip, uint16_t port,
-                            std::unique_ptr<RDMAEndpoint> &endpoint);
+  status_t exchangeMetaData(uint64_t expected_conn_id,
+                            std::unique_ptr<RDMAEndpoint> &endpoint,
+                            std::string *out_peer_ip,
+                            uint16_t *out_client_rdma_port,
+                            uint16_t *out_server_rdma_port);
 };
-
-
-/* -------------------------------------------------------------------------- */
-/*                                RDMA Client                                 */
-/* -------------------------------------------------------------------------- */
 
 class RDMAClient : public Client {
 public:
@@ -229,10 +207,10 @@ private:
   std::shared_ptr<ConnBuffer> buffer;
   size_t num_qps_ = 1;
 
-  status_t exchangeMetaData(std::string ip, uint16_t port,
+  status_t exchangeMetaData(std::string ip, uint16_t server_rddp_port,
                             std::unique_ptr<RDMAEndpoint> &endpoint);
 };
 
 } // namespace hmc
 
-#endif // HMC_NET_RDMA_H
+#endif

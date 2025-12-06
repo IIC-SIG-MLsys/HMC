@@ -224,6 +224,14 @@ class IOBuffer:
     @property
     def ptr(self) -> int:
         return int(self.core.ptr)
+    
+    @property
+    def mem_type(self) -> MemoryType:
+        return MemoryType._from_core(self.core.mem_type)
+    
+    @property
+    def device_id(self) -> int:
+        return int(self.core.device_id)
 
     @property
     def size(self) -> int:
@@ -653,6 +661,7 @@ class Session:
     def recv_data_from(
         self,
         ip: str,
+        port: int,
         recv_buf_ptr: int,
         buf_size: int,
         buf_type: MemoryType,
@@ -662,6 +671,7 @@ class Session:
         _ensure_ok(
             self.comm.recvDataFrom(
                 str(ip),
+                int(port),
                 int(recv_buf_ptr),
                 int(buf_size),
                 _to_core_memory_type(buf_type),
