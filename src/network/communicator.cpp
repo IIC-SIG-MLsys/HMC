@@ -254,14 +254,14 @@ status_t Communicator::connectTo(CtrlId peer_id,
   if (checkConn(peer_ip, data_port, connType) == status_t::SUCCESS) return status_t::SUCCESS;
                                 
   auto &ctrl = CtrlSocketManager::instance();
-  if (self_id < peer_id) {
+  // if (self_id < peer_id) {
     status_t cs = connectCtrl(peer_id, self_id, ctrl_link);
     if (cs != status_t::SUCCESS) return cs;
-  } else {
-    if (!ctrl.waitPeer(peer_id, 30000)) {
-      return status_t::TIMEOUT;
-    }
-  }
+  // } else {
+  //   if (!ctrl.waitPeer(peer_id, 30000)) {
+  //     return status_t::TIMEOUT;
+  //   }
+  // }
 
   status_t ret = conn_manager->initiateConnectionAsClient(peer_ip, data_port, connType);
   if (ret != status_t::SUCCESS) {

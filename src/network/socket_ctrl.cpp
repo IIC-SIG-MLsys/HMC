@@ -258,18 +258,18 @@ bool CtrlSocketManager::connectUds(CtrlId peer_id, const std::string& uds_path, 
   return true;
 }
 
-bool CtrlSocketManager::waitPeer(CtrlId peer_id, int timeout_ms) {
-  std::unique_lock<std::mutex> lk(mu_);
-  auto pred = [&]{ 
-    auto it = id_to_conn_.find(peer_id);
-    return it != id_to_conn_.end() && it->second.fd >= 0;
-  };
-  if (timeout_ms <= 0) {
-    cv_.wait(lk, pred);
-    return true;
-  }
-  return cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), pred);
-}
+// bool CtrlSocketManager::waitPeer(CtrlId peer_id, int timeout_ms) {
+//   std::unique_lock<std::mutex> lk(mu_);
+//   auto pred = [&]{ 
+//     auto it = id_to_conn_.find(peer_id);
+//     return it != id_to_conn_.end() && it->second.fd >= 0;
+//   };
+//   if (timeout_ms <= 0) {
+//     cv_.wait(lk, pred);
+//     return true;
+//   }
+//   return cv_.wait_for(lk, std::chrono::milliseconds(timeout_ms), pred);
+// }
 
 int CtrlSocketManager::dialTcp_(const std::string& ip, uint16_t port) {
   int fd = ::socket(AF_INET, SOCK_STREAM, 0);
@@ -353,7 +353,7 @@ bool CtrlSocketManager::recvHelloAndBind_(int fd, const std::string& from_hint) 
     }
     id_to_conn_[peer_id].fd = fd;
   }
-  cv_.notify_all();
+  // cv_.notify_all();
 
   return true;
 }

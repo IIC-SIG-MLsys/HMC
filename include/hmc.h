@@ -53,7 +53,6 @@
 #include <unistd.h>
 #include <unordered_map>
 #include <utility>
-#include <condition_variable>
 
 namespace hmc {
 
@@ -148,7 +147,6 @@ public:
   // Connect to peer via TCP or UDS, and register self_id to peer (HELLO).
   bool connectTcp(CtrlId peer_id, const std::string& ip, uint16_t port, CtrlId self_id);
   bool connectUds(CtrlId peer_id, const std::string& uds_path, CtrlId self_id);
-  bool waitPeer(CtrlId peer_id, int timeout_ms = 30000);
 
   // Helper: generate per-rank uds path (recommended for multi-proc same-host).
   static std::string udsPathFor(const std::string& dir, CtrlId peer_id);
@@ -223,7 +221,7 @@ private:
   // for tmp socket fd
   std::unordered_map<std::string, std::deque<int>> pending_by_ip_;
 
-  mutable std::condition_variable cv_;
+  // mutable std::condition_variable cv_;
 };
 
 // Templates

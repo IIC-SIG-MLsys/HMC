@@ -37,6 +37,7 @@ int ctrl_sock = -1;
 
 Communicator *comm = nullptr;
 std::shared_ptr<ConnBuffer> buffer;
+std::shared_ptr<ConnBuffer> gpu_buffer;
 
 Memory *gpu_mem_op = new Memory(device_id);
 Memory *cpu_mem_op = new Memory(0, MemoryType::CPU);
@@ -238,13 +239,14 @@ void send_channel_slice_rdma_cpu(Context ctx) {
 void send_channel_slice_ucx(Context ctx) {
   total_time = 0;
 
-  if (buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
+  auto start = steady_clock_t::now();
+
+  // just for time calcu
+  if (gpu_buffer->writeFromCpu(ctx.gpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
     LOG(ERROR) << "[UCX] writeFromCpu failed.";
     return;
   }
-
-  auto start = steady_clock_t::now();
 
   auto status = comm->put(server_ip, static_cast<uint16_t>(g_port),
                           /*local_off=*/0, /*remote_off=*/0,
@@ -297,6 +299,8 @@ int main(int argc, char *argv[]) {
 
   if (use_cpu_buffer) {
     buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
+    gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size,
+                                          MemoryType::DEFAULT);
   } else {
     buffer = std::make_shared<ConnBuffer>(device_id, buffer_size,
                                           MemoryType::DEFAULT);
