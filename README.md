@@ -1,237 +1,65 @@
-# HMC User Guide
+## What is HMC?
 
-**Heterogeneous Memories Communication Framework**
+<p align="center">
+  <img src="docs/hmc.png" width="300" />
+</p>
 
----
+HMC(Heterogeneous Memory Communication) is a communication framework for heterogeneous systems (CPU / GPU / accelerators). It provides:
 
-## Overview
+* **Unified memory abstraction**: `Memory`
+  A device-agnostic interface for allocating/freeing buffers and copying data across devices.
+* **Unified registered IO buffer**: `ConnBuffer`
+  A stable, registered buffer used as the staging area for all network transfers.
+* **Unified transport**: `Communicator`
+  A single interface for one-sided data movement between peers’ buffers:
+  * `ConnType.RDMA` (platform/device dependent)
+  * `ConnType.UCX` (commonly used for CPU and some GPU-direct configurations)
+* **Control plane** for synchronization & small messages
+  A rank-based control channel over **TCP** and/or **UDS** (same-host).
 
-**HMC** is a communication framework for heterogeneous systems (CPU/GPU/accelerators). It provides:
+### Supported devices
+HMC supports CPU memory and multiple accelerator backends, including:
+* **NVIDIA GPUs** (CUDA)
+* **AMD GPUs** (ROCm)
+* **Hygon platforms / GPUs** (platform-dependent; enabled when the corresponding backend is available in your build)
+* **Cambricon MLUs** (CNRT / Neuware)
+* **Moore Threads GPUs** (MUSA)
 
-* A unified **memory abstraction** (`Memory`, `ConnBuffer`)
-* A unified **transport abstraction** (`Communicator`) with:
-  * **RDMA** backend for device-direct / GPU-direct transfers (platform dependent)
-  * **UCX** backend focused on **RMA read/write** (`writeTo/readFrom`)
-* A lightweight **TCP control channel** (`CtrlSocketManager`) for synchronization and small messages
+> Availability depends on how HMC is built (e.g., enabling CUDA/ROCm/CNRT/MUSA) and on the runtime/driver environment on your machine.
+> We develop and test on Nvidia ConnectX NICs, so optimal performance and compatibility are expected in environments with similar hardware and driver configurations.
 
-Core idea:
+### Core model
 
-> All network operations read/write from a local registered buffer (`ConnBuffer`). Transports move bytes between local/remote buffers.
+> Data movement always happens between two peers’ registered buffers (`ConnBuffer`) using `(offset, size)`.
+> Your application decides offsets and uses a control message (tag) to coordinate.
 
----
 
-# Part A — C++ (Core Library)
+# Part 1 — Python (Recommended)
 
-## A1. Build & Installation (C++)
+## 1. Installation (Python)
 
-### Prerequisites
+HMC Python bindings are built via **pybind11** on top of the C++ core.
 
-* C++14 or newer
+### 1.1 Prerequisites
+
+* Python 3.8+
+* C++14+
 * CMake ≥ 3.18
-* glog
+* UCX (required for ConnType.UCX)
+  * Users must install UCX themselves and place it under: /usr/local/ucx
+  * For NVIDIA / AMD GPU scenarios, it’s recommended to install a UCX build with GPU-Direct / GDR support enabled (and matched to your CUDA/ROCm toolchain)
 
-```bash
-sudo apt-get install libgoogle-glog-dev
-```
+> Tip: Make sure the UCX runtime libraries are visible at runtime (e.g., /usr/local/ucx/lib is on the dynamic linker search path via LD_LIBRARY_PATH or system linker configuration).
 
-Optional:
-
-* GTest
-
-```bash
-sudo apt-get install libgtest-dev
-```
-
-Platform SDKs (as needed): CUDA / ROCm / CNRT / MUSA / …
-
----
-
-### Build from Source
-
-> You can run `build.sh` to quickly build HMC.
+### 1.2 Build & Install from Source
 
 ```bash
 git clone https://github.com/IIC-SIG-MLsys/HMC.git
 cd HMC
-
-mkdir -p build && cd build
-cmake .. -DCMAKE_BUILD_TYPE=Release
-make -j
-```
-
-Common options:
-
-| Option                  | Meaning                                             |
-| ----------------------- | --------------------------------------------------- |
-| `-DBUILD_STATIC_LIB=ON` | Build `libhmc.a`                                    |
-| `-DBUILD_SHARED_LIB=ON` | Build shared library (if supported by your project) |
-
----
-
-## A2. C++ Core Concepts
-
-### `Memory`
-
-Device-agnostic allocate/copy API:
-
-* allocate / free
-* Host↔Device, Device↔Device copies
-
-### `ConnBuffer`
-
-Stable, registered buffer used for network transport. All operations are `(bias, size)` within this buffer:
-
-* external → buffer: `writeFromCpu`, `writeFromGpu`
-* buffer → external: `readToCpu`, `readToGpu`
-
-### `Communicator`
-
-Transport manager providing:
-
-* `initServer()` / `connectTo()`
-* RMA: `writeTo()` / `readFrom()` (RDMA/UCX)
-* two-sided helper: `send()` / `recv()`
-* RDMA-oriented UHM: `sendDataTo()` / `recvDataFrom()`
-
-### `CtrlSocketManager`
-
-TCP control path for sync / small messages (int / POD structs).
-
----
-
-## A3. C++ Examples
-
-### Example 1 — Memory
-
-```cpp
-#include <hmc.h>
-#include <vector>
-using namespace hmc;
-
-int main() {
-  Memory gpu_mem(0, MemoryType::NVIDIA_GPU);
-  void* gpu_ptr = nullptr;
-
-  gpu_mem.allocateBuffer(&gpu_ptr, 1 << 20);
-
-  std::vector<char> host(1 << 20, 'A');
-  gpu_mem.copyHostToDevice(gpu_ptr, host.data(), host.size());
-
-  gpu_mem.freeBuffer(gpu_ptr);
-  return 0;
-}
-```
-
----
-
-### Example 2 — One-Sided Transfer (Buffered RMA Pattern)
-
-#### Server
-
-```cpp
-#include <hmc.h>
-#include <memory>
-using namespace hmc;
-
-int main() {
-  auto buf = std::make_shared<ConnBuffer>(0, 128 * 1024 * 1024, MemoryType::CPU);
-  Communicator comm(buf);
-
-  comm.initServer("192.168.2.244", 2025, ConnType::UCX);
-
-  // Wait for application-level signal, then read from buf->ptr
-  // (e.g. CtrlSocketManager or your own signaling)
-  return 0;
-}
-```
-
-#### Client
-
-```cpp
-#include <hmc.h>
-#include <vector>
-using namespace hmc;
-
-int main() {
-  std::string server_ip = "192.168.2.244";
-
-  auto buf = std::make_shared<ConnBuffer>(0, 128 * 1024 * 1024, MemoryType::CPU);
-  Communicator comm(buf);
-
-  comm.connectTo(server_ip, 2025, ConnType::UCX);
-
-  std::vector<char> payload(4 * 1024 * 1024, 'A');
-  buf->writeFromCpu(payload.data(), payload.size(), 0);
-
-  comm.writeTo(server_ip, 0, payload.size(), ConnType::UCX);
-  return 0;
-}
-```
-
----
-
-### Example 3 — Control Signaling (TCP)
-
-```cpp
-#include <hmc.h>
-using namespace hmc;
-
-int main() {
-  auto &ctrl = CtrlSocketManager::instance();
-
-  // Server: ctrl.startServer("192.168.2.244");
-  // Client: ctrl.getCtrlSockFd("192.168.2.244");
-
-  ctrl.sendCtrlInt("192.168.2.244", 1); // "data ready"
-  return 0;
-}
-```
-
----
-
-## A4. C++ API Reference (Core)
-
-### `Memory`
-
-* `allocateBuffer`, `allocatePeerableBuffer`, `freeBuffer`
-* `copyHostToDevice`, `copyDeviceToHost`, `copyDeviceToDevice`
-
-### `ConnBuffer`
-
-* `writeFromCpu`, `readToCpu`, `writeFromGpu`, `readToGpu`
-
-### `Communicator`
-
-* Server/client: `initServer`, `closeServer`, `connectTo`, `disConnect`, `checkConn`
-* Transfers: `writeTo`, `readFrom`, `send`, `recv`
-* RDMA UHM: `sendDataTo`, `recvDataFrom`
-
-### `CtrlSocketManager`
-
-* `startServer`, `stopServer`, `getCtrlSockFd`
-* `sendCtrlInt`, `recvCtrlInt`
-* `sendCtrlStruct`, `recvCtrlStruct`
-* `closeConnection`, `closeAll`
-
----
-
-# Part B — Python (SDK / PyBind Layer)
-
-## B1. Build & Installation (Python)
-
-> You can run `build_with_python.sh` to quickly build and install HMC.
-
-HMC provides Python bindings via **pybind11**. Build the C++ core first, then build the wheel.
-
-### 1) Initialize submodules
-
-```bash
 git submodule update --init --recursive
 ```
 
-### 2) Build with Python module enabled
-
-From repo root:
+Build with Python module enabled:
 
 ```bash
 mkdir -p build && cd build
@@ -239,11 +67,10 @@ cmake .. -DCMAKE_BUILD_TYPE=Release -DBUILD_PYTHON_MOD=ON
 make -j
 ```
 
-### 3) Build wheel & install
-
-From repo root:
+Build wheel & install:
 
 ```bash
+cd ..
 python -m build
 pip install dist/hmc-*.whl
 ```
@@ -251,214 +78,272 @@ pip install dist/hmc-*.whl
 Verify:
 
 ```bash
-python -c "import hmc; print(hmc)"
+python -c "import hmc; print('hmc imported:', hmc.__file__)"
 ```
 
-Notes:
+### 1.3 (Optional) GPU/Accelerator Backends
 
-* If your build uses CUDA/ROCm, ensure the same toolchain is visible when building the wheel.
-
----
-
-## B2. Python Concepts
-
-Python wraps the C++ core and typically exposes:
-
-* `Session` (recommended high-level API)
-* `IOBuffer` (thin wrapper around `ConnBuffer`, rarely needed directly)
-* Enums: `Status`, `MemoryType`, `ConnType`
-
-Supported Python payload types (typical wrapper behavior):
-
-* `bytes`, `bytearray`, `memoryview`
-* NumPy arrays (CPU)
-* PyTorch tensors (CPU, and CUDA for RDMA path)
-
-Key rule stays the same:
-
-> Python calls also stage into HMC’s internal buffer, then perform `writeTo/readFrom` under the hood.
+If you enable CUDA/ROCm/CNRT/MUSA backends, make sure the same toolchain is visible during build.
 
 ---
 
-## B3. Python Quick Start (UCX, CPU payloads)
+## 2. Key Concepts
 
-### Server
+* `Session` is the recommended high-level API.
+* All transfers are **buffer-staged**:
+
+  1. Copy payload into local `ConnBuffer` (via `sess.buf.put(...)`)
+  2. Send/receive bytes using `sess.put_remote(...)` / `sess.get_remote(...)`
+  3. Copy bytes out of local `ConnBuffer` to your destination (via `sess.buf.get_into(...)`)
+* Offsets are called `bias/offset` in docs and code.
+
+## 3. Example: CPU-to-CPU Transfer (UCX)
+
+### 3.1 Server
 
 ```python
 import hmc
 
 ip = "192.168.2.244"
-port = 2025
+rank = 0
 
 sess = hmc.create_session(
     device_id=0,
     buffer_size=128 * 1024 * 1024,
     mem_type=hmc.MemoryType.CPU,
     num_chs=1,
+    local_ip=ip,
 )
 
-sess.init_server(ip, port, conn=hmc.ConnType.UCX)
-print("UCX server ready")
+sess.init_server(
+    bind_ip=ip,
+    ucx_port=2025,
+    rdma_port=2026,
+    ctrl_tcp_port=5001,
+    self_id=rank,
+    ctrl_uds_dir="/tmp",
+)
 
-# Example: read 1MB from client into a bytearray
-client_ip = "192.168.2.248"
-dst = bytearray(1024 * 1024)
-sess.get_into(client_ip, dst, conn=hmc.ConnType.UCX, bias=0)
-print(dst[:16])
+print("UCX server ready")
 ```
 
-### Client
+### 3.2 Client
 
 ```python
 import hmc
 
 server_ip = "192.168.2.244"
-port = 2025
+my_ip = "192.168.2.248"
 
-sess = hmc.create_session(
-    device_id=0,
-    buffer_size=128 * 1024 * 1024,
-    mem_type=hmc.MemoryType.CPU,
-    num_chs=1,
+sess = hmc.create_session(mem_type=hmc.MemoryType.CPU, local_ip=my_ip)
+
+sess.connect(
+    peer_id=0,
+    self_id=1,
+    peer_ip=server_ip,
+    data_port=2025,
+    ctrl_tcp_port=5001,
+    conn=hmc.ConnType.UCX,
 )
 
-sess.connect(server_ip, port, conn=hmc.ConnType.UCX)
-
 payload = b"hello hmc"
-sess.put(server_ip, payload, conn=hmc.ConnType.UCX, bias=0)
+
+# stage into local ConnBuffer
+n = sess.buf.put(payload, offset=0)
+
+# put local [0, n) -> remote [0, n)
+sess.put_remote(server_ip, 2025, local_off=0, remote_off=0, nbytes=n, conn=hmc.ConnType.UCX)
+print("sent", n, "bytes")
 ```
 
----
+### 3.3 Coordinating “data ready” (recommended)
 
-## B4. NumPy (CPU)
+You typically add a simple tag handshake so the server knows when to read:
 
-### Send NumPy
+```python
+# sender side
+sess.ctrl_send(peer=0, tag=1)
+```
+
+```python
+# receiver side
+tag = sess.ctrl_recv(peer=1)
+assert tag == 1
+# then read data from server-side ConnBuffer using sess.buf.get_into(...)
+```
+
+> Your application should define a protocol: which offset holds which message, and what tags mean.
+
+
+## 4. NumPy & PyTorch (CPU)
+
+### 4.1 NumPy Send/Recv
 
 ```python
 import hmc, numpy as np
 
-sess = hmc.create_session(mem_type=hmc.MemoryType.CPU)
-sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.UCX)
-
 x = np.arange(1024, dtype=np.int32)
-sess.put("192.168.2.244", x, conn=hmc.ConnType.UCX)
-```
 
-### Receive into NumPy
+n = sess.buf.put(x, offset=0)
+sess.put_remote(server_ip, 2025, local_off=0, remote_off=0, nbytes=n, conn=hmc.ConnType.UCX)
 
-```python
-y = np.empty((1024,), dtype=np.int32)
-sess.get_into("192.168.2.244", y, conn=hmc.ConnType.UCX)  # size inferred from y.nbytes
+y = np.empty_like(x)
+sess.get_remote(server_ip, 2025, local_off=0, remote_off=0, nbytes=y.nbytes, conn=hmc.ConnType.UCX)
+sess.buf.get_into(y, nbytes=y.nbytes, offset=0)
 ```
 
 Notes:
 
-* Source arrays are expected contiguous; wrapper may copy if needed.
-* Dest arrays must be writable and contiguous.
+* Source arrays should be C-contiguous; wrapper may copy if needed.
+* Destination arrays must be writable and contiguous.
 
----
-
-## B5. PyTorch (CPU)
+### 4.2 PyTorch CPU Tensor
 
 ```python
-import hmc, torch
+import torch
 
-sess = hmc.create_session(mem_type=hmc.MemoryType.CPU)
-sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.UCX)
+t = torch.arange(4096, dtype=torch.int32)
+n = sess.buf.put(t, offset=0)
 
-t = torch.arange(4096, dtype=torch.int32)  # CPU tensor
-sess.put("192.168.2.244", t, conn=hmc.ConnType.UCX)
+sess.put_remote(server_ip, 2025, local_off=0, remote_off=0, nbytes=n, conn=hmc.ConnType.UCX)
 
 out = torch.empty_like(t)
-sess.get_into("192.168.2.244", out, conn=hmc.ConnType.UCX)
+sess.get_remote(server_ip, 2025, local_off=0, remote_off=0, nbytes=out.numel() * out.element_size(), conn=hmc.ConnType.UCX)
+sess.buf.get_into(out, nbytes=out.numel() * out.element_size(), offset=0)
 ```
 
----
+## 5. GPU Tensors (Advanced)
 
-## B6. PyTorch CUDA (RDMA path)
-
-UCX GPU-direct depends on UCX transport configuration; the common default is:
-
-* **CUDA tensors → RDMA backend**
-
-### Send CUDA tensor (RDMA)
+HMC can stage CUDA tensors via `writeFromGpu/readToGpu` by using the tensor pointer (`data_ptr()` internally).
 
 ```python
-import hmc, torch
-
-sess = hmc.create_session(mem_type=hmc.MemoryType.DEFAULT)
-sess.connect("192.168.2.244", 2025, conn=hmc.ConnType.RDMA)
+import torch
 
 t = torch.randn(1024 * 1024, device="cuda")
-sess.put_torch_cuda("192.168.2.244", t, conn=hmc.ConnType.RDMA)
-```
+n = sess.buf.put(t, offset=0, device="cuda")  # GPU -> ConnBuffer
 
-### Receive into CUDA tensor (RDMA)
+sess.put_remote(server_ip, 2026, local_off=0, remote_off=0, nbytes=n, conn=hmc.ConnType.RDMA)
 
-```python
 recv = torch.empty_like(t)
-sess.get_torch_cuda("192.168.2.244", recv, conn=hmc.ConnType.RDMA)
+sess.get_remote(server_ip, 2026, local_off=0, remote_off=0, nbytes=n, conn=hmc.ConnType.RDMA)
+sess.buf.get_into(recv, nbytes=n, offset=0, device="cuda")
 ```
 
----
+Caveats:
 
-## B7. Python API Reference (Core)
-
-### `create_session(...) -> Session`
-
-Creates internal `IOBuffer + Communicator`.
-
-Common parameters:
-
-* `device_id`
-* `buffer_size`
-* `mem_type`
-* `num_chs`
-
-### `Session.connect(ip, port, conn)`
-
-Client-side connect.
-
-### `Session.init_server(ip, port, conn)`
-
-Server-side listen.
-
-### `Session.put(ip, data, bias=0, conn=ConnType.UCX, size=None)`
-
-Copy `data` into local buffer and `writeTo()` remote.
-
-### `Session.get(ip, size, bias=0, conn=ConnType.UCX) -> bytes`
-
-`readFrom()` remote into local buffer and return bytes.
-
-### `Session.get_into(ip, dest, bias=0, conn=ConnType.UCX, size=None)`
-
-`readFrom()` then copy into `dest`.
-
-### `Session.disconnect(ip, conn)`
-
-Disconnect peer.
-
-### `Session.close_server()`
-
-Stop listener.
+* GPU-direct depends on platform/driver/NIC/UCX/RDMA configuration.
+* Start with CPU path first to validate protocol and correctness.
 
 ---
 
-## Error Handling & Troubleshooting
+## 6. Troubleshooting (Python)
 
-Common issues:
+### Common errors
 
-* **buffer overflow**: `bias + size > buffer_size`
-* **missing connection**: wrong peer `ip` key
-* **backend mismatch**: `ConnType.UCX` vs `ConnType.RDMA`
-* **device limitations**: GPU-direct depends on platform/driver/transport configuration
+* **Buffer overflow**: `offset + nbytes > buffer_size`
+  * Increase `buffer_size` or adjust offsets
+* **Not connected**: `connect()` not called or wrong `data_port/conn`
+* **Ctrl mismatch (UDS vs TCP)**
+  * Use `CTRL_TRANSPORT=tcp` or `CTRL_TRANSPORT=uds` to force a choice
+* **UDS path confusion**
+  * UDS uses a **full socket file path**, not a directory
 
-Best practice:
+### Best practices
+* Define a clear protocol (offset layout + tag meanings).
+* Avoid overwriting remote offsets without an ack handshake.
+* Use `put_nb/get_nb + wait` when you need overlap or concurrent transfers.
 
-* Choose `buffer_size` ≥ max payload + max bias.
-* Start with **CPU buffers for UCX** and validate correctness first.
-* Add control signaling if your application needs strict consumption ordering.
+---
+
+# Part 2 — C++ Core Library (Advanced / Integration)
+
+## 7. Installation (C++)
+
+### 7.1 Prerequisites
+
+* C++14+
+* CMake ≥ 3.18
+* glog
+
+```bash
+sudo apt-get install -y libgoogle-glog-dev
+```
+
+Optional:
+
+```bash
+sudo apt-get install -y libgtest-dev
+```
+
+### 7.2 Build
+
+```bash
+git clone https://github.com/IIC-SIG-MLsys/HMC.git
+cd HMC
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j
+```
+
+## 8. Usage (C++)
+
+### 8.1 Core Components
+
+* `Memory`: unified allocate/copy across devices
+* `ConnBuffer`: stable registered buffer; all transfers use `(offset, size)`
+* `CtrlSocketManager`: ctrl plane, rank-based, TCP/UDS, HELLO binding
+* `Communicator`: data plane + ctrl integration: `put/get/putNB/getNB/wait`, `connectTo/initServer`
+
+### 8.2 Minimal Data-Plane Example (UCX put)
+
+```cpp
+#include <hmc.h>
+#include <memory>
+#include <vector>
+#include <string>
+
+using namespace hmc;
+
+int main() {
+  auto buf = std::make_shared<ConnBuffer>(0, 128ull * 1024 * 1024, MemoryType::CPU);
+  Communicator comm(buf);
+
+  std::string server_ip = "192.168.2.244";
+  uint16_t data_port = 2025;
+  uint16_t ctrl_tcp_port = 5001;
+
+  Communicator::CtrlLink link;
+  link.transport = Communicator::CtrlTransport::TCP;
+  link.ip = server_ip;
+  link.port = ctrl_tcp_port;
+
+  comm.connectTo(/*peer_id=*/0, /*self_id=*/1, server_ip, data_port, link, ConnType::UCX);
+
+  std::vector<char> payload(1024, 'A');
+  buf->writeFromCpu(payload.data(), payload.size(), 0);
+
+  comm.put(server_ip, data_port, /*local_off=*/0, /*remote_off=*/0, payload.size(), ConnType::UCX);
+  return 0;
+}
+```
+
+## 9. Appendix: API Cheatsheet
+
+### Python
+
+* `create_session(...) -> Session`
+* `Session.init_server(...)`
+* `Session.connect(...)`
+* `Session.put_remote(...) / get_remote(...)`
+* `Session.put_nb(...) / get_nb(...) / wait(...)`
+* `Session.ctrl_send(...) / ctrl_recv(...)`
+* `sess.buf.put(...) / sess.buf.get_into(...) / buffer_copy_within(...)`
+
+### C++
+
+* `ConnBuffer::{writeFromCpu/readToCpu/writeFromGpu/readToGpu/copyWithin}`
+* `Communicator::{initServer/connectTo/put/get/putNB/getNB/wait/ctrlSend/ctrlRecv}`
+* `CtrlSocketManager::{start/connectTcp/connectUds/sendU64/recvU64/...}`
 
 ---
 
