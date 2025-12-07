@@ -31,3 +31,5 @@ CUDA_VISIBLE_DEVICES=1 python3 perf_rocm.py --role client --server-ip 192.168.2.
 
 # collective
 CUDA_VISIBLE_DEVICES=5 torchrun --standalone --nproc_per_node=4 collective.py
+
+CUDA_VISIBLE_DEVICES=5,6 torchrun --standalone --nproc_per_node=2 collective_gpu.py

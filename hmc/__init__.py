@@ -205,6 +205,57 @@ def _torch_cuda_ptr_and_nbytes(t: Any, nbytes: Optional[int]) -> tuple[int, int]
     return ptr, n
 
 
+def memory_type_from_torch_tensor(t: Any, *, default: "MemoryType" = None) -> "MemoryType":
+    """
+    Map a torch.Tensor -> hmc.MemoryType (wrapper enum).
+
+    - CPU tensor -> MemoryType.CPU
+    - CUDA tensor -> MemoryType.NVIDIA_GPU or MemoryType.AMD_GPU (best-effort)
+    - Other device types -> best-effort mapping if known, else DEFAULT (or provided default)
+
+    Args:
+        t: torch.Tensor
+        default: fallback when device type is unknown; if None, uses MemoryType.DEFAULT
+    """
+    torch = _try_import_torch()
+    if torch is None or not torch.is_tensor(t):
+        raise TypeError("Expected a torch.Tensor")
+
+    if default is None:
+        default = MemoryType.DEFAULT
+
+    dev = getattr(t, "device", None)
+    dev_type = getattr(dev, "type", None)
+
+    # CPU
+    if dev_type == "cpu" or not bool(getattr(t, "is_cuda", False)) and dev_type is None:
+        return MemoryType.CPU
+
+    # CUDA / HIP
+    if dev_type == "cuda" or bool(getattr(t, "is_cuda", False)):
+        # Best-effort: distinguish NVIDIA vs AMD (HIP)
+        hip = getattr(torch.version, "hip", None)
+        cuda = getattr(torch.version, "cuda", None)
+
+        # On ROCm builds, torch.version.hip is usually a non-empty string; torch.version.cuda is often None.
+        if hip:
+            return MemoryType.AMD_GPU
+        if cuda:
+            return MemoryType.NVIDIA_GPU
+
+        return default
+
+    # Cambricon MLU: some builds use device.type == "mlu"
+    if dev_type == "mlu":
+        return MemoryType.CAMBRICON_MLU
+
+    # Moore Threads (MUSA) often appears as device.type == "musa"
+    if dev_type == "musa":
+        return MemoryType.MOORE_GPU
+
+    return default
+
+
 DeviceHint = Optional[Literal["cpu", "cuda", "ptr"]]
 
 
@@ -709,6 +760,7 @@ __all__ = [
     "IOBuffer",
     "Session",
     "create_session",
+    "memory_type_from_torch_tensor",
 ]
 
 from .collective import Group, init_group, alltoall  # noqa: E402

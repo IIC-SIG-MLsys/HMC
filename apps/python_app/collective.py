@@ -12,18 +12,19 @@ def pick_ip() -> str:
 def main():
     dist.init_process_group(backend="gloo")
     rank = int(dist.get_rank())
+    local_rank = int(os.environ.get("LOCAL_RANK", -1)) # from torchrun
     world = int(dist.get_world_size())
 
     ip = pick_ip()
     base = int(os.environ.get("HMC_BASE_PORT", "25000"))
 
-    port_ucx = base + rank # 要用节点内的rank，而不是全局rank
-    port_rdma = base + 1000 + rank # 要用节点内的rank，而不是全局rank
+    port_ucx = base + local_rank # TODO，跨机要用节点内的rank，而不是全局rank
+    port_rdma = base + 1000 + local_rank # 跨机要用节点内的rank，而不是全局rank
     # ctrl tcp port must be unique per rank on same host
-    ctrl_tcp_port = int(os.environ.get("HMC_CTRL_TCP_PORT", str(base + 2000))) + rank
+    ctrl_tcp_port = int(os.environ.get("HMC_CTRL_TCP_PORT", str(base + 2000))) + local_rank
 
     sess = hmc.create_session(
-        device_id=int(os.environ.get("LOCAL_RANK", "0")),
+        device_id=local_rank,
         buffer_size=64 * 1024 * 1024, # 根据要业务要交换的参数矩阵的最大大小创建
         mem_type=hmc.MemoryType.CPU, # 根据业务的交换的矩阵的类型决定
     )
