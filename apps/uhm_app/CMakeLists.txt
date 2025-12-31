@@ -26,6 +26,8 @@ elseif(MUSA_FOUND)
     target_link_libraries(uhm_client PRIVATE hmc_shared_lib ${MUSA_LIBRARIES})
 else()
     message(WARNING "ROCm, CUDA, NEUWARE, or Moore Threads not found. Defaulting to CPU support.")
+    target_link_libraries(uhm_server PRIVATE hmc_shared_lib)
+    target_link_libraries(uhm_client PRIVATE hmc_shared_lib)
 endif()
 
 # ====== 关键修复 1: 在链接前设置路径 ======
