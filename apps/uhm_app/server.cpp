@@ -1,7 +1,6 @@
 #include <arpa/inet.h>
 #include <chrono>
 #include <cmath>
-#include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
 #include <mutex>
@@ -49,15 +48,16 @@ struct Context {
 static Communicator::CtrlId self_rank = 0;
 static Communicator::CtrlId peer_rank = 1;
 
-std::string get_env_or_default(const char *var_name, const std::string &default_val) {
+std::string get_env_or_default(const char *var_name,
+                               const std::string &default_val) {
   const char *val = getenv(var_name);
   return (val != nullptr) ? std::string(val) : default_val;
 }
 
-static uint32_t get_env_u32_or_default(const char* var_name, uint32_t def) {
-  const char* v = getenv(var_name);
+static uint32_t get_env_u32_or_default(const char *var_name, uint32_t def) {
+  const char *v = getenv(var_name);
   if (!v) return def;
-  char* end = nullptr;
+  char *end = nullptr;
   unsigned long x = std::strtoul(v, &end, 10);
   if (end == v) return def;
   return static_cast<uint32_t>(x);
@@ -71,7 +71,8 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   }
 
   int opt = 1;
-  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt, sizeof(opt));
+  setsockopt(server_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &opt,
+             sizeof(opt));
 
   sockaddr_in address{};
   address.sin_family = AF_INET;
@@ -92,7 +93,9 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
     exit(EXIT_FAILURE);
   }
 
-  LOG(INFO) << "Waiting for TCP control connection on " << bind_ip << ":" << port;
+  std::cout << "Waiting for TCP control connection on " << bind_ip << ":" << port
+            << std::endl;
+
   socklen_t addrlen = sizeof(address);
   int new_socket = accept(server_fd, (struct sockaddr *)&address, &addrlen);
   if (new_socket < 0) {
@@ -101,7 +104,7 @@ int setup_tcp_control_socket(int port, const std::string &bind_ip) {
   }
 
   close(server_fd);
-  LOG(INFO) << "TCP control connection established.";
+  std::cout << "TCP control connection established." << std::endl;
   return new_socket;
 }
 
@@ -109,7 +112,7 @@ void close_control_socket(int &sock) {
   if (sock >= 0) {
     close(sock);
     sock = -1;
-    LOG(INFO) << "Control socket closed.";
+    std::cout << "Control socket closed." << std::endl;
   }
 }
 
@@ -126,12 +129,12 @@ void recv_channel_slice_uhm(Context ctx) {
   // NOTE: per your new Communicator, recvDataFrom is still recvDataFrom(ip, ...)
   // and is intended for RDMA-only cross-IP p2p legacy UHM path;
   // so we DO NOT add port here.
-
+  //
   // 如果client也init了server，那么此处用client的rdma port，否则是0
-  if (comm->recvDataFrom(client_ip, 0, ctx.gpu_data_ptr, ctx.size, MemoryType::DEFAULT,
-                         &flags) != status_t::SUCCESS) {
+  if (comm->recvDataFrom(client_ip, 0, ctx.gpu_data_ptr, ctx.size,
+                         MemoryType::DEFAULT, &flags) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UHM] Receive failed.";
+    std::cerr << "[UHM] Receive failed." << std::endl;
   }
   wait_for_control_message(ctrl_socket_fd);
 }
@@ -144,7 +147,8 @@ void recv_channel_slice_serial(Context ctx) {
   for (size_t i = 0; i < num_chunks; ++i) {
     auto r = comm->ctrlRecv(peer_rank, &tag);
     if (r != status_t::SUCCESS || tag != 1) {
-      LOG(ERROR) << "Serial mode: control message timeout, tag is " << tag;
+      std::cerr << "Serial mode: control message timeout, tag is " << tag
+                << std::endl;
       return;
     }
   }
@@ -159,11 +163,11 @@ void recv_channel_slice_g2h2g(Context ctx) {
   for (size_t i = 0; i < num_chunks; ++i) {
     auto r = comm->ctrlRecv(peer_rank, &tag);
     if (r != status_t::SUCCESS) {
-      LOG(ERROR) << "G2H2G mode: control message timeout";
+      std::cerr << "G2H2G mode: control message timeout" << std::endl;
       return;
     }
     if (tag != 1) {
-      LOG(ERROR) << "G2H2G mode: control tag error is " << tag;
+      std::cerr << "G2H2G mode: control tag error is " << tag << std::endl;
       return;
     }
   }
@@ -178,13 +182,13 @@ void recv_channel_slice_rdma_cpu(Context ctx) {
 void recv_channel_slice_ucx(Context ctx) {
   if (!wait_for_control_message(ctrl_socket_fd)) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] control message timeout.";
+    std::cerr << "[UCX] control message timeout." << std::endl;
     return;
   }
 
   if (buffer->readToCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] readToCpu failed.";
+    std::cerr << "[UCX] readToCpu failed." << std::endl;
     return;
   }
 
@@ -206,11 +210,8 @@ std::string get_mode_from_args(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
-  FLAGS_colorlogtostderr = true;
-  FLAGS_alsologtostderr = true;
-
   std::string mode = get_mode_from_args(argc, argv);
-  LOG(INFO) << "Running in mode: " << mode;
+  std::cout << "Running in mode: " << mode << std::endl;
 
   server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
   client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
@@ -218,7 +219,8 @@ int main(int argc, char *argv[]) {
 
   self_rank = get_env_u32_or_default("SELF_RANK", 0);
   peer_rank = get_env_u32_or_default("PEER_RANK", 1);
-  LOG(INFO) << "Ranks: self=" << self_rank << " peer=" << peer_rank;
+  std::cout << "Ranks: self=" << self_rank << " peer=" << peer_rank
+            << std::endl;
 
   std::mutex log_mutex;
 
@@ -227,7 +229,8 @@ int main(int argc, char *argv[]) {
   if (use_cpu_buffer) {
     buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
   } else {
-    buffer = std::make_shared<ConnBuffer>(device_id, buffer_size, MemoryType::DEFAULT);
+    buffer = std::make_shared<ConnBuffer>(device_id, buffer_size,
+                                          MemoryType::DEFAULT);
   }
 
   int num_channels = 1;
@@ -245,29 +248,33 @@ int main(int argc, char *argv[]) {
   if (same_host) {
     std::string uds_dir = get_env_or_default("CTRL_UDS_DIR", "/tmp");
     ctrl_uds_path = Communicator::udsPathFor(uds_dir, self_rank);
-    LOG(INFO) << "Ctrl transport=UDS (same_host) listen_path=" << ctrl_uds_path;
+    std::cout << "Ctrl transport=UDS (same_host) listen_path=" << ctrl_uds_path
+              << std::endl;
   } else {
     ctrl_uds_path = "";
-    LOG(INFO) << "Ctrl transport=TCP listen " << server_ip << ":" << ctrl_tcp_port;
+    std::cout << "Ctrl transport=TCP listen " << server_ip << ":"
+              << ctrl_tcp_port << std::endl;
   }
 
-  if (comm->initServer(server_ip,
-                       static_cast<uint16_t>(port),
-                       ctrl_tcp_port,
-                       ctrl_uds_path,
-                       conn_type) != status_t::SUCCESS) {
-    LOG(ERROR) << "Failed to init server.";
+  if (comm->initServer(server_ip, static_cast<uint16_t>(port), ctrl_tcp_port,
+                       ctrl_uds_path, conn_type) != status_t::SUCCESS) {
+    std::cerr << "Failed to init server." << std::endl;
     return -1;
   }
 
   ctrl_socket_fd = setup_tcp_control_socket(ctrl_port, tcp_server_ip);
 
   void (*recv_func)(Context) = nullptr;
-  if (mode == "serial") recv_func = recv_channel_slice_serial;
-  else if (mode == "g2h2g") recv_func = recv_channel_slice_g2h2g;
-  else if (mode == "rdma_cpu") recv_func = recv_channel_slice_rdma_cpu;
-  else if (mode == "ucx") recv_func = recv_channel_slice_ucx;
-  else recv_func = recv_channel_slice_uhm;
+  if (mode == "serial")
+    recv_func = recv_channel_slice_serial;
+  else if (mode == "g2h2g")
+    recv_func = recv_channel_slice_g2h2g;
+  else if (mode == "rdma_cpu")
+    recv_func = recv_channel_slice_rdma_cpu;
+  else if (mode == "ucx")
+    recv_func = recv_channel_slice_ucx;
+  else
+    recv_func = recv_channel_slice_uhm;
 
   for (int power = 5; power <= 26; ++power) {
     size_t total_size = size_t(1) << power;
@@ -282,13 +289,15 @@ int main(int argc, char *argv[]) {
     if (mode == "rdma_cpu") {
       gpu_mem_op->freeBuffer(gpu_ptr);
       std::this_thread::sleep_for(std::chrono::seconds(1));
-      LOG(INFO) << "--------------------------------------------";
+      std::cout << "--------------------------------------------"
+                << std::endl;
       continue;
     }
 
     if (mode == "g2h2g") {
-      if (buffer->readToCpu(host_data.data(), total_size, 0) != status_t::SUCCESS) {
-        LOG(ERROR) << "[G2H2G] readToCpu failed.";
+      if (buffer->readToCpu(host_data.data(), total_size, 0) !=
+          status_t::SUCCESS) {
+        std::cerr << "[G2H2G] readToCpu failed." << std::endl;
       }
     } else {
       gpu_mem_op->copyDeviceToHost(host_data.data(), gpu_ptr, total_size);
@@ -302,12 +311,12 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    LOG(INFO) << "[Size " << total_size << " B] Data Integrity: "
-              << (valid ? "PASS" : "FAIL");
+    std::cout << "[Size " << total_size << " B] Data Integrity: "
+              << (valid ? "PASS" : "FAIL") << std::endl;
 
     gpu_mem_op->freeBuffer(gpu_ptr);
     std::this_thread::sleep_for(std::chrono::seconds(1));
-    LOG(INFO) << "--------------------------------------------";
+    std::cout << "--------------------------------------------" << std::endl;
   }
 
   comm->closeServer();

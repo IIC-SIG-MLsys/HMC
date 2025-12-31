@@ -92,14 +92,12 @@ target_link_libraries(uhm_server PRIVATE
     ${UCS_LIB}
     ${UCT_LIB}
     ${UCM_LIB}
-    glog
 )
 target_link_libraries(uhm_client PRIVATE
     ${UCP_LIB}
     ${UCS_LIB}
     ${UCT_LIB}
     ${UCM_LIB}
-    glog
 )
 
 
@@ -117,12 +115,6 @@ target_include_directories(uhm_client PRIVATE
     ${UCX_INCLUDE_DIR}
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>
 )
-
-# ==============================
-# 4. 链接库
-# ==============================
-target_link_libraries(uhm_server PRIVATE ${UCX_LIB} glog)
-target_link_libraries(uhm_client PRIVATE ${UCX_LIB} glog)
 
 # ==============================
 # 5. 额外调试信息

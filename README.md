@@ -263,11 +263,6 @@ Caveats:
 
 * C++14+
 * CMake ≥ 3.18
-* glog
-
-```bash
-sudo apt-get install -y libgoogle-glog-dev
-```
 
 Optional:
 

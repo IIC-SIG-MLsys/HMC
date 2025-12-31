@@ -21,7 +21,6 @@ target_link_libraries(${BINARY}
     ${MPI_CXX_LIBRARY}   # MPI 库
     ${VERBS_LIBRARIES} 
     ${RDMACM_LIBRARIES}  # RDMA 库
-    glog                 # GLOG 日志库
 )
 
 # 根据后端平台添加额外链接库
@@ -44,6 +43,5 @@ target_include_directories(${BINARY}
     ${MPI_INCLUDE_DIR}
     ${VERBS_INCLUDE_DIR}
     ${RDMACM_INCLUDE_DIR}
-    ${GLOG_INCLUDE_DIRS}
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>  # 仅在 MUSA 启用时添加
 )

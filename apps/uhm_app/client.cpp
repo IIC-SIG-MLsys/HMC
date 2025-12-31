@@ -4,7 +4,6 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
-#include <glog/logging.h>
 #include <hmc.h>
 #include <iostream>
 #include <mutex>
@@ -136,7 +135,7 @@ void send_channel_slice_uhm(Context ctx) {
 
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UHM] Send failed.";
+    std::cerr << "[UHM] Send failed." << std::endl;
   }
   send_control_message("Finished");
 }
@@ -198,7 +197,8 @@ void send_channel_slice_g2h2g(Context ctx) {
             .count();
 
     auto r = comm->ctrlSend(peer_rank, 1);
-    if (r != status_t::SUCCESS) std::cout << "send error " << server_ip << std::endl;
+    if (r != status_t::SUCCESS)
+      std::cout << "send error " << server_ip << std::endl;
   }
 
   send_control_message("Finished");
@@ -244,13 +244,13 @@ void send_channel_slice_ucx(Context ctx) {
   // just for time calcu
   if (gpu_buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] writeFromCpu failed.";
+    std::cerr << "[UCX] writeFromCpu failed." << std::endl;
     return;
   }
 
   if (buffer->writeFromCpu(ctx.cpu_data_ptr, ctx.size, 0) != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] writeFromCpu failed.";
+    std::cerr << "[UCX] writeFromCpu failed." << std::endl;
     return;
   }
 
@@ -265,7 +265,7 @@ void send_channel_slice_ucx(Context ctx) {
 
   if (status != status_t::SUCCESS) {
     std::lock_guard<std::mutex> lock(*ctx.log_mutex);
-    LOG(ERROR) << "[UCX] put failed.";
+    std::cerr << "[UCX] put failed." << std::endl;
     return;
   }
 
@@ -287,11 +287,8 @@ std::string get_mode_from_args(int argc, char *argv[]) {
 }
 
 int main(int argc, char *argv[]) {
-  FLAGS_colorlogtostderr = true;
-  FLAGS_alsologtostderr = true;
-
   string mode = get_mode_from_args(argc, argv);
-  LOG(INFO) << "Running in mode: " << mode;
+  std::cout << "Running in mode: " << mode << std::endl;
 
   server_ip = get_env_or_default("SERVER_IP", DEFAULT_SERVER_IP);
   client_ip = get_env_or_default("CLIENT_IP", DEFAULT_CLIENT_IP);
@@ -299,14 +296,14 @@ int main(int argc, char *argv[]) {
 
   self_rank = get_env_u32_or_default("SELF_RANK", 1);
   peer_rank = get_env_u32_or_default("PEER_RANK", 0);
-  LOG(INFO) << "Ranks: self=" << self_rank << " peer=" << peer_rank;
+  std::cout << "Ranks: self=" << self_rank << " peer=" << peer_rank << std::endl;
 
   const bool use_cpu_buffer = (mode == "g2h2g" || mode == "ucx");
 
   if (use_cpu_buffer) {
     buffer = std::make_shared<ConnBuffer>(0, buffer_size, MemoryType::CPU);
     gpu_buffer = std::make_shared<ConnBuffer>(device_id, buffer_size,
-                                          MemoryType::DEFAULT);
+                                              MemoryType::DEFAULT);
   } else {
     buffer = std::make_shared<ConnBuffer>(device_id, buffer_size,
                                           MemoryType::DEFAULT);
@@ -327,19 +324,21 @@ int main(int argc, char *argv[]) {
     std::string uds_dir = get_env_or_default("CTRL_UDS_DIR", "/tmp");
     ctrl_link.uds_path =
         Communicator::udsPathFor(uds_dir, peer_rank); // server rank path
-    LOG(INFO) << "Ctrl transport=UDS (same_host) path=" << ctrl_link.uds_path;
+    std::cout << "Ctrl transport=UDS (same_host) path=" << ctrl_link.uds_path
+              << std::endl;
   } else {
     ctrl_link.transport = Communicator::CtrlTransport::TCP;
     ctrl_link.ip = server_ip;
     ctrl_link.port = static_cast<uint16_t>(ctrl_port + 1);
-    LOG(INFO) << "Ctrl transport=TCP " << ctrl_link.ip << ":" << ctrl_link.port;
+    std::cout << "Ctrl transport=TCP " << ctrl_link.ip << ":" << ctrl_link.port
+              << std::endl;
   }
 
   {
     auto r = comm->connectTo(peer_rank, self_rank, server_ip,
                              static_cast<uint16_t>(port), ctrl_link, conn_type);
     if (r != status_t::SUCCESS) {
-      LOG(ERROR) << "HMC connectTo failed";
+      std::cerr << "HMC connectTo failed" << std::endl;
       return -1;
     }
   }
@@ -395,13 +394,13 @@ int main(int argc, char *argv[]) {
     double gbps = (total_size * 8.0) / time_s / 1e9;
     double MBps = (total_size / time_s) / (1024.0 * 1024.0);
 
-    LOG(INFO) << "[Mode: " << mode << "] "
+    std::cout << "[Mode: " << mode << "] "
               << (mode == "uhm" || mode == "rdma_cpu" || mode == "ucx"
                       ? "[Network only]"
                       : "[End-to-end]")
               << " Data Size: " << total_size << " B, "
               << "Time: " << total_time << " us, " << MBps << " MiB/s, " << gbps
-              << " Gbps";
+              << " Gbps" << std::endl;
 
     ofstream file("performanceTest_client.csv", ios::app);
     if (file.is_open()) {

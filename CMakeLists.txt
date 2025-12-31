@@ -77,10 +77,6 @@ function(hmc_link_common target_name)
   target_include_directories(${target_name} PUBLIC ${VERBS_INCLUDE_DIR} ${RDMACM_INCLUDE_DIR})
   target_link_libraries(${target_name} PUBLIC ${VERBS_LIBRARIES} ${RDMACM_LIBRARIES})
 
-  find_package(glog REQUIRED)
-  target_include_directories(${target_name} PUBLIC ${GLOG_INCLUDE_DIRS})
-  target_link_libraries(${target_name} PUBLIC glog)
-
   if(EXISTS "${UCX_INCLUDE_DIR}/ucp/api/ucp.h")
     target_include_directories(${target_name} PUBLIC ${UCX_INCLUDE_DIR})
   endif()

@@ -268,11 +268,6 @@ sess.buf.get_into(recv, nbytes=n, offset=0, device="cuda")
 
 * C++14+
 * CMake ≥ 3.18
-* glog
-
-```bash
-sudo apt-get install -y libgoogle-glog-dev
-```
 
 可选：
 
