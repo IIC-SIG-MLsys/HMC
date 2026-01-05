@@ -253,7 +253,7 @@ status_t Communicator::connectTo(CtrlId peer_id,
                                  ConnType connType) {
   if (checkConn(peer_ip, data_port, connType) == status_t::SUCCESS) return status_t::SUCCESS;
                                 
-  auto &ctrl = CtrlSocketManager::instance();
+  // auto &ctrl = CtrlSocketManager::instance();
   // if (self_id < peer_id) {
     status_t cs = connectCtrl(peer_id, self_id, ctrl_link);
     if (cs != status_t::SUCCESS) return cs;

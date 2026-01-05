@@ -10,15 +10,15 @@
 namespace hmc {
 
 // 同 server：保证一致
-static std::uint16_t channel_from_ip(const std::string &ip) {
-  std::uint32_t h = 2166136261u;
-  for (unsigned char c : ip) {
-    h ^= c;
-    h *= 16777619u;
-  }
-  std::uint16_t ch = static_cast<std::uint16_t>((h ^ (h >> 16)) & 0xFFFFu);
-  return (ch == 0) ? 1 : ch;
-}
+// static std::uint16_t channel_from_ip(const std::string &ip) {
+//   std::uint32_t h = 2166136261u;
+//   for (unsigned char c : ip) {
+//     h ^= c;
+//     h *= 16777619u;
+//   }
+//   std::uint16_t ch = static_cast<std::uint16_t>((h ^ (h >> 16)) & 0xFFFFu);
+//   return (ch == 0) ? 1 : ch;
+// }
 
 static bool make_sockaddr_v4(const std::string &ip, uint16_t port,
                              sockaddr_storage &ss, socklen_t &ss_len) {
