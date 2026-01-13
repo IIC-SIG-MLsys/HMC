@@ -5,3 +5,4 @@ dist
 hmc.egg-info
 hmc/*so
 hmc/__pycache__*
+performanceTest_client.csv

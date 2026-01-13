@@ -134,10 +134,12 @@ if(BUILD_PYTHON_MOD)
   endif()
 
   add_subdirectory(extern/pybind11)
-  file(GLOB_RECURSE PYTHON_SRC_RECURSE "python/*.cpp")
-  if(NOT PYTHON_SRC_RECURSE)
-    message(FATAL_ERROR "No python binding sources found in python/")
+  file(GLOB_RECURSE ALL_PYTHON_CPP "python/*.cpp")
+  list(FILTER ALL_PYTHON_CPP EXCLUDE REGEX "vllm-het/") # exclude "vllm-het"
+  if(NOT ALL_PYTHON_CPP)
+    message(FATAL_ERROR "No python binding sources found in python/ (excluding vllm-het)")
   endif()
+  set(PYTHON_SRC_RECURSE ${ALL_PYTHON_CPP})
 
   pybind11_add_module(hmc ${PYTHON_SRC_RECURSE})
   target_link_libraries(hmc PRIVATE hmc_static_lib)
