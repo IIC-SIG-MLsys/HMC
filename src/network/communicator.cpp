@@ -2,6 +2,7 @@
  * @copyright Copyright (c) 2025, SDU spgroup Holding Limited
  */
 #include "./net.h"
+#include "./net_rdma.h"
 #include <hmc.h>
 
 namespace hmc {
@@ -153,6 +154,46 @@ status_t Communicator::wait(const std::vector<uint64_t> &wr_ids) {
   }
 
   return status_t::SUCCESS;
+}
+
+status_t Communicator::putPipeline(std::string ip,
+                                   uint16_t port,
+                                   size_t local_off,
+                                   size_t remote_off,
+                                   size_t size,
+                                   size_t chunk_size,
+                                   size_t max_inflight,
+                                   ConnType connType) {
+  status_t sret = checkConn(ip, port, connType);
+  if (sret != status_t::SUCCESS) return sret;
+
+  return conn_manager->withEndpoint(
+      ip, port, connType, [local_off, remote_off, size, chunk_size, max_inflight](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        auto *rdma_ep = dynamic_cast<RDMAEndpoint *>(ep);
+        if (!rdma_ep) return status_t::UNSUPPORT;
+        return rdma_ep->writeDataPipeline(local_off, remote_off, size, chunk_size, max_inflight);
+      });
+}
+
+status_t Communicator::getPipeline(std::string ip,
+                                   uint16_t port,
+                                   size_t local_off,
+                                   size_t remote_off,
+                                   size_t size,
+                                   size_t chunk_size,
+                                   size_t max_inflight,
+                                   ConnType connType) {
+  status_t sret = checkConn(ip, port, connType);
+  if (sret != status_t::SUCCESS) return sret;
+
+  return conn_manager->withEndpoint(
+      ip, port, connType, [local_off, remote_off, size, chunk_size, max_inflight](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        auto *rdma_ep = dynamic_cast<RDMAEndpoint *>(ep);
+        if (!rdma_ep) return status_t::UNSUPPORT;
+        return rdma_ep->readDataPipeline(local_off, remote_off, size, chunk_size, max_inflight);
+      });
 }
 
 status_t Communicator::ctrlSend(CtrlId peer, uint64_t tag) {

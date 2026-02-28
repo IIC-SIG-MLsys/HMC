@@ -19,9 +19,9 @@
 using namespace hmc;
 using namespace std;
 
-const std::string DEFAULT_SERVER_IP = "192.168.2.244";
-const std::string DEFAULT_CLIENT_IP = "192.168.2.244";
-const std::string DEFAULT_TCP_IP = "192.168.2.244";
+const std::string DEFAULT_SERVER_IP = "192.168.2.243";
+const std::string DEFAULT_CLIENT_IP = "192.168.2.243";
+const std::string DEFAULT_TCP_IP = "192.168.2.243";
 
 std::string server_ip;
 std::string client_ip;
@@ -272,12 +272,44 @@ void send_channel_slice_ucx(Context ctx) {
   send_control_message("Finished");
 }
 
+static size_t pipeline_chunk_size = 4 * 1024 * 1024;  // 4MB default
+static size_t pipeline_max_inflight = 64;
+
+void send_channel_slice_pipeline(Context ctx) {
+  total_time = 0;
+
+  buffer->writeFromGpu(ctx.gpu_data_ptr, ctx.size, 0);
+
+  auto start = steady_clock_t::now();
+
+  auto status = comm->putPipeline(
+      server_ip, static_cast<uint16_t>(g_port),
+      0, 0,
+      ctx.size,
+      pipeline_chunk_size,
+      pipeline_max_inflight,
+      ConnType::RDMA);
+
+  auto end = steady_clock_t::now();
+
+  total_time =
+      std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+
+  if (status != status_t::SUCCESS) {
+    std::lock_guard<std::mutex> lock(*ctx.log_mutex);
+    std::cerr << "[Pipeline] putPipeline failed." << std::endl;
+    return;
+  }
+
+  send_control_message("Finished");
+}
+
 std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
       if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu" || mode == "ucx")
+          mode == "rdma_cpu" || mode == "ucx" || mode == "pipeline")
         return mode;
       cerr << "Invalid mode: " << mode << "\n";
       exit(1);
@@ -298,6 +330,17 @@ int main(int argc, char *argv[]) {
   peer_rank = get_env_u32_or_default("PEER_RANK", 0);
   std::cout << "Ranks: self=" << self_rank << " peer=" << peer_rank << std::endl;
 
+  int num_channels = get_env_u32_or_default("NUM_CHANNELS", 1);
+  std::cout << "Using " << num_channels << " QPs" << std::endl;
+
+  // Pipeline parameters
+  if (mode == "pipeline") {
+    pipeline_chunk_size = get_env_u32_or_default("PIPELINE_CHUNK", 4 * 1024 * 1024);
+    pipeline_max_inflight = get_env_u32_or_default("PIPELINE_INFLIGHT", 64);
+    std::cout << "Pipeline: chunk=" << (pipeline_chunk_size / 1024 / 1024) 
+              << "MB, max_inflight=" << pipeline_max_inflight << std::endl;
+  }
+
   const bool use_cpu_buffer = (mode == "g2h2g" || mode == "ucx");
 
   if (use_cpu_buffer) {
@@ -309,7 +352,6 @@ int main(int argc, char *argv[]) {
                                           MemoryType::DEFAULT);
   }
 
-  int num_channels = 1;
   comm = new Communicator(buffer, num_channels);
 
   ConnType conn_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
@@ -365,6 +407,8 @@ int main(int argc, char *argv[]) {
     send_func = send_channel_slice_rdma_cpu;
   else if (mode == "ucx")
     send_func = send_channel_slice_ucx;
+  else if (mode == "pipeline")
+    send_func = send_channel_slice_pipeline;
   else
     send_func = send_channel_slice_uhm;
 

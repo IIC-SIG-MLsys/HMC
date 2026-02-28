@@ -17,9 +17,9 @@
 using namespace hmc;
 using namespace std;
 
-const std::string DEFAULT_SERVER_IP = "192.168.2.248";
-const std::string DEFAULT_CLIENT_IP = "192.168.2.248";
-const std::string DEFAULT_TCP_IP = "192.168.2.248";
+const std::string DEFAULT_SERVER_IP = "192.168.2.243";
+const std::string DEFAULT_CLIENT_IP = "192.168.2.243";
+const std::string DEFAULT_TCP_IP = "192.168.2.243";
 
 std::string server_ip;
 std::string client_ip;
@@ -195,12 +195,19 @@ void recv_channel_slice_ucx(Context ctx) {
   gpu_mem_op->copyHostToDevice(ctx.gpu_data_ptr, ctx.cpu_data_ptr, ctx.size);
 }
 
+static size_t pipeline_chunk_size = 4 * 1024 * 1024;
+static size_t pipeline_max_inflight = 64;
+
+void recv_channel_slice_pipeline(Context ctx) {
+  wait_for_control_message(ctrl_socket_fd);
+}
+
 std::string get_mode_from_args(int argc, char *argv[]) {
   for (int i = 1; i < argc; ++i) {
     if (string(argv[i]) == "--mode" && i + 1 < argc) {
       string mode = argv[i + 1];
       if (mode == "uhm" || mode == "serial" || mode == "g2h2g" ||
-          mode == "rdma_cpu" || mode == "ucx")
+          mode == "rdma_cpu" || mode == "ucx" || mode == "pipeline")
         return mode;
       cerr << "Invalid mode: " << mode << endl;
       exit(1);
@@ -233,7 +240,16 @@ int main(int argc, char *argv[]) {
                                           MemoryType::DEFAULT);
   }
 
-  int num_channels = 1;
+  int num_channels = get_env_u32_or_default("NUM_CHANNELS", 1);
+  std::cout << "Using " << num_channels << " QPs" << std::endl;
+
+  if (mode == "pipeline") {
+    pipeline_chunk_size = get_env_u32_or_default("PIPELINE_CHUNK", 4 * 1024 * 1024);
+    pipeline_max_inflight = get_env_u32_or_default("PIPELINE_INFLIGHT", 64);
+    std::cout << "Pipeline: chunk=" << (pipeline_chunk_size / 1024 / 1024) 
+              << "MB, max_inflight=" << pipeline_max_inflight << std::endl;
+  }
+
   comm = new Communicator(buffer, num_channels);
 
   ConnType conn_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
@@ -273,6 +289,8 @@ int main(int argc, char *argv[]) {
     recv_func = recv_channel_slice_rdma_cpu;
   else if (mode == "ucx")
     recv_func = recv_channel_slice_ucx;
+  else if (mode == "pipeline")
+    recv_func = recv_channel_slice_pipeline;
   else
     recv_func = recv_channel_slice_uhm;
 

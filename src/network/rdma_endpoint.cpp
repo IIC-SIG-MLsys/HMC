@@ -21,6 +21,10 @@ RDMAEndpoint::~RDMAEndpoint() {
     closeEndpoint(); // only client actively closes
   }
   cleanRdmaResources();
+  if (qp_load_) {
+    delete[] qp_load_;
+    qp_load_ = nullptr;
+  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -34,6 +38,12 @@ status_t RDMAEndpoint::setupQPs() {
   }
 
   qps_.resize(num_qps_);
+  
+  if (qp_load_) delete[] qp_load_;
+  qp_load_ = new size_t[num_qps_];
+  for (size_t i = 0; i < num_qps_; ++i) {
+    qp_load_[i] = 0;
+  }
 
   memset(&qp_init_attr, 0, sizeof(qp_init_attr));
   qp_init_attr.qp_type = IBV_QPT_RC;
@@ -67,6 +77,22 @@ status_t RDMAEndpoint::setupQPs() {
   }
 
   return status_t::SUCCESS;
+}
+
+size_t RDMAEndpoint::getLeastLoadedQP() {
+  if (num_qps_ <= 1 || !qp_load_) return 0;
+  
+  size_t min_load = SIZE_MAX;
+  size_t best_qp = 0;
+  
+  for (size_t i = 0; i < num_qps_; ++i) {
+    size_t load = qp_load_[i];
+    if (load < min_load) {
+      min_load = load;
+      best_qp = i;
+    }
+  }
+  return best_qp;
 }
 
 ibv_qp *RDMAEndpoint::getQP(size_t idx) {
@@ -237,7 +263,16 @@ status_t RDMAEndpoint::writeDataNB(size_t local_off, size_t remote_off, size_t s
   void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + remote_off;
 
   *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-  size_t qp_idx = (*wr_id) % num_qps_;
+  
+  size_t qp_idx;
+  if (num_qps_ > 1 && qp_load_) {
+    qp_idx = getLeastLoadedQP();
+    qp_load_[qp_idx]++;
+  } else {
+    qp_idx = 0;
+  }
+
+  *wr_id = (*wr_id << 8) | qp_idx;  // Encode QP index in lower 8 bits
 
   return postWrite(localAddr, remoteAddr, size, buffer_mr,
                    remote_metadata_attr.key, *wr_id, /*signaled=*/true, qp_idx);
@@ -288,10 +323,114 @@ status_t RDMAEndpoint::readDataNB(size_t local_off, size_t remote_off, size_t si
   void *remoteAddr = reinterpret_cast<char *>(remote_metadata_attr.address) + remote_off;
 
   *wr_id = next_wr_id_.fetch_add(1, std::memory_order_relaxed);
-  size_t qp_idx = (*wr_id) % num_qps_;
+  
+  size_t qp_idx;
+  if (num_qps_ > 1 && qp_load_) {
+    qp_idx = getLeastLoadedQP();
+    qp_load_[qp_idx]++;
+  } else {
+    qp_idx = 0;
+  }
+
+  *wr_id = (*wr_id << 8) | qp_idx;  // Encode QP index in lower 8 bits
 
   return postRead(localAddr, remoteAddr, size, buffer_mr,
                   remote_metadata_attr.key, *wr_id, /*signaled=*/true, qp_idx);
+}
+
+/* -------------------------------------------------------------------------- */
+/*                        Pipeline / Batch Transfer APIs                       */
+/* -------------------------------------------------------------------------- */
+
+status_t RDMAEndpoint::writeDataPipeline(size_t local_off, size_t remote_off, size_t size,
+                                         size_t chunk_size, size_t max_inflight) {
+  if (local_off + size > buffer->buffer_size) {
+    logError("writeDataPipeline: local range invalid");
+    return status_t::ERROR;
+  }
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("writeDataPipeline: remote range invalid");
+    return status_t::ERROR;
+  }
+
+  if (chunk_size == 0) {
+    chunk_size = 4 * 1024 * 1024;  // 4MB default chunk
+  }
+
+  const size_t num_chunks = (size + chunk_size - 1) / chunk_size;
+  std::vector<uint64_t> pending_wrs;
+  pending_wrs.reserve(num_chunks);
+
+  size_t offset = 0;
+  size_t batch_start = 0;
+
+  while (offset < size) {
+    const size_t current_chunk_size = std::min(chunk_size, size - offset);
+
+    uint64_t wr_id;
+    if (writeDataNB(local_off + offset, remote_off + offset, current_chunk_size, &wr_id) 
+        != status_t::SUCCESS) {
+      logError("writeDataPipeline: writeDataNB failed at offset %zu", offset);
+      return status_t::ERROR;
+    }
+    pending_wrs.push_back(wr_id);
+    offset += current_chunk_size;
+
+    if (pending_wrs.size() >= max_inflight || offset >= size) {
+      if (waitWrIdMulti(pending_wrs) != status_t::SUCCESS) {
+        logError("writeDataPipeline: waitWrIdMulti failed");
+        return status_t::ERROR;
+      }
+      pending_wrs.clear();
+    }
+  }
+
+  return status_t::SUCCESS;
+}
+
+status_t RDMAEndpoint::readDataPipeline(size_t local_off, size_t remote_off, size_t size,
+                                        size_t chunk_size, size_t max_inflight) {
+  if (local_off + size > buffer->buffer_size) {
+    logError("readDataPipeline: local range invalid");
+    return status_t::ERROR;
+  }
+  if (remote_off + size > (size_t)remote_metadata_attr.length) {
+    logError("readDataPipeline: remote range invalid");
+    return status_t::ERROR;
+  }
+
+  if (chunk_size == 0) {
+    chunk_size = 4 * 1024 * 1024;  // 4MB default chunk
+  }
+
+  const size_t num_chunks = (size + chunk_size - 1) / chunk_size;
+  std::vector<uint64_t> pending_wrs;
+  pending_wrs.reserve(num_chunks);
+
+  size_t offset = 0;
+
+  while (offset < size) {
+    const size_t current_chunk_size = std::min(chunk_size, size - offset);
+
+    uint64_t wr_id;
+    if (readDataNB(local_off + offset, remote_off + offset, current_chunk_size, &wr_id) 
+        != status_t::SUCCESS) {
+      logError("readDataPipeline: readDataNB failed at offset %zu", offset);
+      return status_t::ERROR;
+    }
+    pending_wrs.push_back(wr_id);
+    offset += current_chunk_size;
+
+    if (pending_wrs.size() >= max_inflight || offset >= size) {
+      if (waitWrIdMulti(pending_wrs) != status_t::SUCCESS) {
+        logError("readDataPipeline: waitWrIdMulti failed");
+        return status_t::ERROR;
+      }
+      pending_wrs.clear();
+    }
+  }
+
+  return status_t::SUCCESS;
 }
 
 /* -------------------------------------------------------------------------- */
@@ -810,6 +949,9 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
 
   const int max_wcs = cq_capacity;
   std::vector<ibv_wc> wcs(max_wcs);
+  
+  int busy_wait_count = 0;
+  const int BUSY_WAIT_THRESHOLD = 1000;
 
   while (true) {
     int n = ibv_poll_cq(cq, max_wcs, wcs.data());
@@ -817,7 +959,21 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
       logError("waitWrId: poll CQ failed");
       return status_t::ERROR;
     }
-    if (n == 0) continue;
+    if (n == 0) {
+      busy_wait_count++;
+      if (busy_wait_count > BUSY_WAIT_THRESHOLD) {
+        std::this_thread::sleep_for(std::chrono::microseconds(50));
+      } else if (busy_wait_count > 100) {
+#if defined(__x86_64__) || defined(_M_X64)
+        __builtin_ia32_pause();
+#elif defined(__aarch64__)
+        asm volatile("yield");
+#endif
+      }
+      continue;
+    }
+
+    busy_wait_count = 0;
 
     for (int i = 0; i < n; ++i) {
       if (wcs[i].status != IBV_WC_SUCCESS) {
@@ -825,6 +981,12 @@ status_t RDMAEndpoint::waitWrId(uint64_t target_wr_id) {
         return status_t::ERROR;
       }
       if (wcs[i].wr_id == target_wr_id) {
+        if (num_qps_ > 1 && qp_load_) {
+          size_t completed_qp_idx = wcs[i].wr_id & 0xFF;
+          if (completed_qp_idx < num_qps_) {
+            qp_load_[completed_qp_idx]--;
+          }
+        }
         return status_t::SUCCESS;
       }
     }
@@ -849,6 +1011,9 @@ status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
   auto start_ts   = std::chrono::steady_clock::now();
   auto last_prog  = start_ts;
   size_t last_left = pending.size();
+  
+  int busy_wait_count = 0;
+  const int BUSY_WAIT_THRESHOLD = 1000;
 
   while (!pending.empty()) {
     int n = ibv_poll_cq(cq, max_wcs, wcs.data());
@@ -860,6 +1025,7 @@ status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
     bool made_progress = false;
 
     if (n > 0) {
+      busy_wait_count = 0;
       for (int i = 0; i < n; ++i) {
         const auto &cqe = wcs[i];
 
@@ -871,6 +1037,12 @@ status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
 
         auto it = pending.find(cqe.wr_id);
         if (it != pending.end()) {
+          if (num_qps_ > 1 && qp_load_) {
+            size_t completed_qp_idx = cqe.wr_id & 0xFF;
+            if (completed_qp_idx < num_qps_) {
+              qp_load_[completed_qp_idx]--;
+            }
+          }
           pending.erase(it);
           made_progress = true;
 
@@ -887,12 +1059,16 @@ status_t RDMAEndpoint::waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
       continue;
     }
 
+    busy_wait_count++;
+    if (busy_wait_count > BUSY_WAIT_THRESHOLD) {
+      std::this_thread::sleep_for(std::chrono::microseconds(50));
+    } else if (busy_wait_count > 100) {
 #if defined(__x86_64__) || defined(_M_X64)
-    __builtin_ia32_pause();
+      __builtin_ia32_pause();
 #elif defined(__aarch64__)
-    asm volatile("yield");
+      asm volatile("yield");
 #endif
-    std::this_thread::sleep_for(std::chrono::microseconds(50));
+    }
 
     auto now = std::chrono::steady_clock::now();
     if (now - start_ts > timeout) {

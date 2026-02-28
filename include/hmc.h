@@ -309,6 +309,25 @@ public:
   status_t wait(uint64_t wr_id);
   status_t wait(const std::vector<uint64_t>& wr_ids);
 
+  // --- Pipeline Operations (batched/streaming) ---
+  status_t putPipeline(std::string ip,
+                       uint16_t port,
+                       size_t local_off,
+                       size_t remote_off,
+                       size_t size,
+                       size_t chunk_size = 0,
+                       size_t max_inflight = 64,
+                       ConnType connType = ConnType::RDMA);
+
+  status_t getPipeline(std::string ip,
+                       uint16_t port,
+                       size_t local_off,
+                       size_t remote_off,
+                       size_t size,
+                       size_t chunk_size = 0,
+                       size_t max_inflight = 64,
+                       ConnType connType = ConnType::RDMA);
+
   // --- High-level Data APIs (UHM interface, only RDMA, only p2p with different IP) ---
   status_t sendDataTo(std::string ip, uint16_t port, void *send_buf, size_t buf_size,
                       MemoryType buf_type, ConnType connType = ConnType::RDMA);

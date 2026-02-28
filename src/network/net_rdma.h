@@ -88,6 +88,11 @@ public:
   status_t writeDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wr_id) override;
   status_t readDataNB(size_t local_off, size_t remote_off, size_t size, uint64_t *wr_id) override;
 
+  status_t writeDataPipeline(size_t local_off, size_t remote_off, size_t size, 
+                            size_t chunk_size = 0, size_t max_inflight = 64);
+  status_t readDataPipeline(size_t local_off, size_t remote_off, size_t size,
+                           size_t chunk_size = 0, size_t max_inflight = 64);
+
   status_t waitWrId(uint64_t wr_id) override;
   status_t waitWrIdMulti(const std::vector<uint64_t>& target_wr_ids,
                          std::chrono::milliseconds timeout = std::chrono::seconds(5));
@@ -139,13 +144,9 @@ public:
   struct rdma_event_channel *cm_event_channel = NULL;
   struct ibv_comp_channel *completion_channel = NULL;
 
-  uint8_t initiator_depth = 8;
-  uint8_t responder_resources = 8;
-  uint8_t retry_count = 3;
-
-  uint16_t cq_capacity = 16;
-  uint16_t max_sge = 2;
-  uint16_t max_wr = 8;
+  uint16_t cq_capacity = 256;
+  uint16_t max_sge = 4;
+  uint16_t max_wr = 128;
 
   uint8_t port_num_      = 1;
   uint8_t sgid_index_    = 1;
@@ -153,8 +154,15 @@ public:
 
   uint64_t conn_id_ = 0;
 
+  uint8_t initiator_depth = 16;
+  uint8_t responder_resources = 16;
+  uint8_t retry_count = 7;
+
+  size_t getLeastLoadedQP();
+
 private:
   std::atomic<uint64_t> next_wr_id_{1};
+  size_t* qp_load_ = nullptr;
 };
 
 /* -------------------------------- Server -------------------------------- */
