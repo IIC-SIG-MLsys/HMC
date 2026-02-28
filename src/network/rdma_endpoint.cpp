@@ -362,7 +362,6 @@ status_t RDMAEndpoint::writeDataPipeline(size_t local_off, size_t remote_off, si
   pending_wrs.reserve(num_chunks);
 
   size_t offset = 0;
-  size_t batch_start = 0;
 
   while (offset < size) {
     const size_t current_chunk_size = std::min(chunk_size, size - offset);
