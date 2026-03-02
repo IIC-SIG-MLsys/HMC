@@ -114,57 +114,48 @@ status_t ConnManager::initiateConnectionAsClient(std::string targetIp,
 
   switch (clientType) {
   case ConnType::RDMA: {
-    auto client = new RDMAClient(buffer, num_chs_);
-    endpoint = client->connect(targetIp, targetPort);
-    if (!endpoint) {
-      return status_t::ERROR;
-    }
-    std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-    PeerKey key{targetIp, targetPort};
-    auto &entry = rdma_endpoint_map[key];
-    entry.endpoint = std::move(endpoint);
+    RDMAClient client(buffer, num_chs_);
+    endpoint = client.connect(targetIp, targetPort);
     break;
   }
   case ConnType::UCX: {
-    auto client = new UCXClient(buffer);
-    endpoint = client->connect(targetIp, targetPort);
-    if (!endpoint) {
-      return status_t::ERROR;
-    }
-    std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-    PeerKey key{targetIp, targetPort};
-    auto &entry = ucx_endpoint_map[key];
-    entry.endpoint = std::move(endpoint);
+    UCXClient client(buffer);
+    endpoint = client.connect(targetIp, targetPort);
     break;
   }
   default:
     return status_t::INVALID_CONFIG;
   }
 
+  if (!endpoint) {
+    return status_t::ERROR;
+  }
+
+  _addEndpoint(targetIp, targetPort, std::move(endpoint), clientType);
   return status_t::SUCCESS;
 }
 
 void ConnManager::_addEndpoint(std::string ip, uint16_t port,
                                std::unique_ptr<Endpoint> endpoint, ConnType connType) {
-  PeerKey key{ip, port};
-  if (endpoint) {
-    switch (connType) {
-    case ConnType::RDMA: {
-      std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-      auto &entry = rdma_endpoint_map[key];
-      entry.endpoint = std::move(endpoint);
-      break;
-    }
-    case ConnType::UCX: {
-      std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-      auto &entry = ucx_endpoint_map[key];
-      entry.endpoint = std::move(endpoint);
-      break;
-    }
-  }
-  } else {
+  if (!endpoint) {
     logDebug("Get a invalid Endpoint, can not add it to the endpoint_map");
+    return;
   }
+
+  EndpointMap *map = endpointMapFor(connType);
+  std::mutex *map_mu = endpointMapMutexFor(connType);
+  if (!map || !map_mu) {
+    logError("Invalid conn type for adding endpoint: %d", (int)connType);
+    return;
+  }
+
+  PeerKey key{ip, port};
+  std::lock_guard<std::mutex> lock(*map_mu);
+  auto &entry = (*map)[key];
+  if (!entry) {
+    entry = std::make_shared<EndpointEntry>();
+  }
+  entry->endpoint = std::move(endpoint);
 }
 
 void ConnManager::_removeEndpoint(std::string ip, uint16_t port, ConnType connType) {
@@ -176,29 +167,33 @@ void ConnManager::_removeEndpoint(std::string ip, uint16_t port, ConnType connTy
 
   PeerKey key{ip, port};
   // 两阶段删除保证
+  std::shared_ptr<EndpointEntry> entry;
   std::unique_ptr<Endpoint> to_delete;
-  switch (connType) {
-  case ConnType::RDMA: {
-    std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-    auto it = rdma_endpoint_map.find(key);
-    if (it == rdma_endpoint_map.end())
-      return;
-    to_delete = std::move(it->second.endpoint);
-    rdma_endpoint_map.erase(it);
-    break;
-  }
-  case ConnType::UCX: {
-    std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-    auto it = ucx_endpoint_map.find(key);
-    if (it == ucx_endpoint_map.end())
-      return;
-    to_delete = std::move(it->second.endpoint);
-    ucx_endpoint_map.erase(it);
-    break;
-  }
-  default:
+  EndpointMap *map = endpointMapFor(connType);
+  std::mutex *map_mu = endpointMapMutexFor(connType);
+  if (!map || !map_mu) {
     return;
   }
+
+  {
+    std::lock_guard<std::mutex> lock(*map_mu);
+    auto it = map->find(key);
+    if (it == map->end()) {
+      return;
+    }
+    entry = it->second;
+    map->erase(it);
+  }
+
+  if (!entry) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    to_delete = std::move(entry->endpoint);
+  }
+
   to_delete.reset(); // 显式的关闭ep
   return;
 }
@@ -208,47 +203,43 @@ status_t ConnManager::_removeEndpointIfMatch(std::string ip, uint16_t port,
                                              uint64_t expected_conn_id) {
   PeerKey key{ip, port};
 
-  std::unique_ptr<Endpoint> to_delete;
+  if (connType == ConnType::UCX) {
+    _removeEndpoint(ip, port, connType);
+    return status_t::SUCCESS;
+  }
 
-  switch (connType) {
-  case ConnType::RDMA: {
+  if (connType != ConnType::RDMA) {
+    return status_t::INVALID_CONFIG;
+  }
+
+  std::shared_ptr<EndpointEntry> entry;
+  std::unique_ptr<Endpoint> to_delete;
+  {
     std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
     auto it = rdma_endpoint_map.find(key);
     if (it == rdma_endpoint_map.end()) {
       return status_t::SUCCESS;
     }
+    entry = it->second;
+    if (!entry) {
+      rdma_endpoint_map.erase(it);
+      return status_t::SUCCESS;
+    }
 
-    Endpoint* cur = it->second.endpoint.get();
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    Endpoint *cur = entry->endpoint.get();
     if (!cur) {
       rdma_endpoint_map.erase(it);
       return status_t::SUCCESS;
     }
 
-    auto* rdma_ep = dynamic_cast<RDMAEndpoint*>(cur);
-    if (!rdma_ep) {
+    auto *rdma_ep = dynamic_cast<RDMAEndpoint *>(cur);
+    if (!rdma_ep || rdma_ep->conn_id_ != expected_conn_id) {
       return status_t::SUCCESS;
     }
 
-    if (rdma_ep->conn_id_ != expected_conn_id) {
-      return status_t::SUCCESS;
-    }
-
-    to_delete = std::move(it->second.endpoint);
+    to_delete = std::move(entry->endpoint);
     rdma_endpoint_map.erase(it);
-    break;
-  }
-  case ConnType::UCX: {
-    std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-    auto it = ucx_endpoint_map.find(key);
-    if (it == ucx_endpoint_map.end()) {
-      return status_t::SUCCESS;
-    }
-    to_delete = std::move(it->second.endpoint);
-    ucx_endpoint_map.erase(it);
-    break;
-  }
-  default:
-    return status_t::INVALID_CONFIG;
   }
 
   to_delete.reset();

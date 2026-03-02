@@ -10,6 +10,7 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 option(BUILD_STATIC_LIB "Build static library" OFF)
 option(BUILD_PYTHON_MOD "Build python module" OFF)
+option(BUILD_TESTS "Build unit tests" OFF)
 
 if(BUILD_PYTHON_MOD)
   set(BUILD_STATIC_LIB ON)
@@ -157,3 +158,8 @@ endif()
 install(DIRECTORY include/ DESTINATION include)
 
 add_subdirectory(apps/uhm_app)
+
+if(BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

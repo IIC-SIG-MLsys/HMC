@@ -8,6 +8,7 @@
 #include "../utils/signal_handle.h"
 #include <hmc.h>
 
+#include <memory>
 #include <mutex>
 #include <string>
 #include <utility> // For std::pair
@@ -103,6 +104,7 @@ public:
     std::unique_ptr<Endpoint> endpoint;
     std::mutex mutex; // 排他性使用, ep一次只可以被一个调用使用
   };
+  using EndpointMap = std::unordered_map<PeerKey, std::shared_ptr<EndpointEntry>, PeerKeyHash>;
 
   ConnManager(std::shared_ptr<ConnBuffer> buffer, size_t num_chs);
   // shared ptr 不能在构造函数里面shared from this,需要构造完成后，单独初始化
@@ -126,30 +128,25 @@ public:
 
   // 安全访问接口
   template <typename F> status_t withEndpoint(const std::string &ip, uint16_t port, ConnType type, F &&func) {
-    EndpointEntry *entry = nullptr;
+    std::shared_ptr<EndpointEntry> entry;
     PeerKey key{ip, port};
-
-    switch (type) {
-    case ConnType::RDMA: {
-      std::lock_guard<std::mutex> lock(rdma_endpoint_map_mutex);
-      auto it = rdma_endpoint_map.find(key);
-      if (it == rdma_endpoint_map.end()) {
-        return status_t::NOT_FOUND;
-      }
-      entry = &it->second;
-      break;
-    }
-    case ConnType::UCX: {
-      std::lock_guard<std::mutex> lock(ucx_endpoint_map_mutex);
-      auto it = ucx_endpoint_map.find(key);
-      if (it == ucx_endpoint_map.end()) {
-        return status_t::NOT_FOUND;
-      }
-      entry = &it->second;
-      break;
-    }
-    default:
+    EndpointMap *map = endpointMapFor(type);
+    std::mutex *map_mu = endpointMapMutexFor(type);
+    if (!map || !map_mu) {
       return status_t::INVALID_CONFIG;
+    }
+
+    {
+      std::lock_guard<std::mutex> lock(*map_mu);
+      auto it = map->find(key);
+      if (it == map->end()) {
+        return status_t::NOT_FOUND;
+      }
+      entry = it->second;
+    }
+
+    if (!entry) {
+      return status_t::ERROR;
     }
 
     // 第二阶段：锁定并执行操作
@@ -182,9 +179,31 @@ public:
   ~ConnManager();
 
 private:
+  EndpointMap *endpointMapFor(ConnType type) {
+    switch (type) {
+    case ConnType::RDMA:
+      return &rdma_endpoint_map;
+    case ConnType::UCX:
+      return &ucx_endpoint_map;
+    default:
+      return nullptr;
+    }
+  }
+
+  std::mutex *endpointMapMutexFor(ConnType type) {
+    switch (type) {
+    case ConnType::RDMA:
+      return &rdma_endpoint_map_mutex;
+    case ConnType::UCX:
+      return &ucx_endpoint_map_mutex;
+    default:
+      return nullptr;
+    }
+  }
+
   size_t num_chs_ = 1;
-  std::unordered_map<PeerKey, EndpointEntry, PeerKeyHash> rdma_endpoint_map;
-  std::unordered_map<PeerKey, EndpointEntry, PeerKeyHash> ucx_endpoint_map;
+  EndpointMap rdma_endpoint_map;
+  EndpointMap ucx_endpoint_map;
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex rdma_endpoint_map_mutex;
   std::mutex ucx_endpoint_map_mutex;

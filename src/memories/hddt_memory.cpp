@@ -105,7 +105,7 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
       this->initStatus = status_t::UNSUPPORT;
 #endif
     } else if (mem_type == MemoryType::MOORE_GPU) {
-#ifdef ENABLE_MUSA
+#ifndef ENABLE_MUSA
       throw std::runtime_error("Moore GPU is not supported");
       this->initStatus = status_t::UNSUPPORT;
 #endif
@@ -115,7 +115,15 @@ status_t Memory::setDeviceIdAndMemoryType(int device_id, MemoryType mem_type) {
   }
   this->hmcDeviceId = device_id;
   this->memoryClass = this->createMemoryClass(this->hmcMemoryType);
-  this->memoryClass->init();
+  if (!this->memoryClass) {
+    this->initStatus = status_t::INVALID_CONFIG;
+    return this->initStatus;
+  }
+
+  const status_t init_ret = this->memoryClass->init();
+  if (init_ret != status_t::SUCCESS) {
+    this->initStatus = init_ret;
+  }
 
   return this->initStatus;
 }

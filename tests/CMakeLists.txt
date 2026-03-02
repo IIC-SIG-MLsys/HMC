@@ -33,7 +33,7 @@ elseif(NEUWARE_FOUND)
 elseif(MUSA_FOUND)
     target_link_libraries(${BINARY} PRIVATE ${MUSA_LIBRARIES})  # 直接链接 MUSA 运行时库
 else()
-    message(FATAL_ERROR "ROCm, CUDA, NEUWARE or MUSA is required but was not found.")
+    message(WARNING "No GPU backend found. Building CPU-only tests.")
 endif()
 
 # 添加包含目录
@@ -45,3 +45,5 @@ target_include_directories(${BINARY}
     ${RDMACM_INCLUDE_DIR}
     $<$<BOOL:${MUSA_FOUND}>:${MUSA_INCLUDE_DIRS}>  # 仅在 MUSA 启用时添加
 )
+
+add_test(NAME ${BINARY} COMMAND ${BINARY})

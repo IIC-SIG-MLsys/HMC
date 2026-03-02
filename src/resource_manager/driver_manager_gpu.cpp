@@ -10,7 +10,7 @@ int GPUManager::getDeviceCount() const { return devices.size(); };
 
 GPUDeviceInfo GPUManager::getDeviceInfo(int device_id) const {
   if (device_id < 0 || device_id >= static_cast<int>(devices.size())) {
-    return {-1, 0, 0, 0, MemoryType::DEFAULT};
+    return {-1, 0, 0, "", MemoryType::DEFAULT};
   }
   return devices[device_id];
 };
@@ -59,7 +59,7 @@ status_t GPUManager::init() {
 #elif defined(ENABLE_NEUWARE)
     gpuSetCtx(contexts[dev_id]);
     info.vendor = MemoryType::CAMBRICON_MLU;
-#elif ENABLE_MUSA
+#elif defined(ENABLE_MUSA)
     gpuSetDevice(dev_id);
     info.vendor = MemoryType::MOORE_GPU;
 #endif
