@@ -116,6 +116,27 @@ public:
   status_t initiateConnectionAsClient(std::string targetIp, uint16_t targetPort,
                                       ConnType clientType);
 
+  // P2P connection (same-host, key=peer_rank)
+  status_t initiateP2pConnection(int peer_rank,
+                                 std::unique_ptr<Endpoint> endpoint);
+  void _addP2pEndpoint(int peer_rank, std::unique_ptr<Endpoint> endpoint);
+  void _removeP2pEndpoint(int peer_rank);
+
+  template <typename F>
+  status_t withP2pEndpoint(int peer_rank, F &&func) {
+    std::shared_ptr<EndpointEntry> entry;
+    {
+      std::lock_guard<std::mutex> lock(p2p_endpoint_map_mutex_);
+      auto it = p2p_endpoint_map_.find(peer_rank);
+      if (it == p2p_endpoint_map_.end()) return status_t::NOT_FOUND;
+      entry = it->second;
+    }
+    if (!entry || !entry->endpoint) return status_t::ERROR;
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    if (!entry->endpoint) return status_t::ERROR;
+    return func(entry->endpoint.get());
+  }
+
   // [discard] 返回指针的方式，无法保证对象的并发安全
   // 返回 Endpoint 指针，对象所有权依然在endpoint_map
   // Endpoint *getEndpoint(std::string ip) {
@@ -207,6 +228,9 @@ private:
   std::shared_ptr<ConnBuffer> buffer;
   std::mutex rdma_endpoint_map_mutex;
   std::mutex ucx_endpoint_map_mutex;
+
+  std::unordered_map<int, std::shared_ptr<EndpointEntry>> p2p_endpoint_map_;
+  std::mutex p2p_endpoint_map_mutex_;
 
   std::mutex server_mu_;
   std::unordered_map<ConnType, std::unique_ptr<Server>, ConnTypeHash> servers_;

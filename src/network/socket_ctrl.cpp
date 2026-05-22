@@ -219,21 +219,29 @@ bool CtrlSocketManager::connectTcp(CtrlId peer_id, const std::string& ip, uint16
     return false;
   }
 
-  // Bind immediately by known peer_id for outgoing usage.
+  // If a connection (from accept) already exists for this peer,
+  // keep it and discard the new outbound fd.
   {
     std::unique_lock<std::mutex> lk(mu_);
     auto it = id_to_conn_.find(peer_id);
-    if (it != id_to_conn_.end() && it->second.fd >= 0 && it->second.fd != fd) {
-      ::shutdown(it->second.fd, SHUT_RDWR);
-      ::close(it->second.fd);
+    if (it == id_to_conn_.end()) {
+      id_to_conn_[peer_id].fd = fd;
+    } else {
+      ::shutdown(fd, SHUT_RDWR);
+      ::close(fd);
     }
-    id_to_conn_[peer_id].fd = fd;
   }
   return true;
 }
 
 bool CtrlSocketManager::connectUds(CtrlId peer_id, const std::string& uds_path, CtrlId self_id) {
-  int fd = dialUds_(uds_path);
+  // Retry connect because the peer's UDS listener may not be ready yet
+  int fd = -1;
+  for (int retry = 0; retry < 5; retry++) {
+    fd = dialUds_(uds_path);
+    if (fd >= 0) break;
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
   if (fd < 0) {
     std::cerr << "[CtrlSocketManager] connectUds failed to " << uds_path << "\n";
     return false;
@@ -246,14 +254,17 @@ bool CtrlSocketManager::connectUds(CtrlId peer_id, const std::string& uds_path, 
     return false;
   }
 
+  // If a connection (from accept) already exists for this peer,
+  // keep it and discard the new outbound fd.
   {
     std::unique_lock<std::mutex> lk(mu_);
     auto it = id_to_conn_.find(peer_id);
-    if (it != id_to_conn_.end() && it->second.fd >= 0 && it->second.fd != fd) {
-      ::shutdown(it->second.fd, SHUT_RDWR);
-      ::close(it->second.fd);
+    if (it == id_to_conn_.end()) {
+      id_to_conn_[peer_id].fd = fd;
+    } else {
+      ::shutdown(fd, SHUT_RDWR);
+      ::close(fd);
     }
-    id_to_conn_[peer_id].fd = fd;
   }
   return true;
 }
@@ -340,19 +351,22 @@ bool CtrlSocketManager::recvHelloAndBind_(int fd, const std::string& from_hint) 
     return false;
   }
 
-  {
-    std::unique_lock<std::mutex> lk(mu_);
-    auto it = id_to_conn_.find(peer_id);
-    if (it != id_to_conn_.end() && it->second.fd >= 0 && it->second.fd != fd) {
-      std::cerr << "[CtrlSocketManager] WARNING replace peer=" << peer_id
-              << " oldfd=" << it->second.fd << " newfd=" << fd
-              << " from=" << from_hint << "\n";
-      // Replace old connection for this peer_id.
-      ::shutdown(it->second.fd, SHUT_RDWR);
-      ::close(it->second.fd);
+    {
+      // recvHelloAndBind_ is called from the accept thread.
+      // If the peer already has a registered fd (from connectUds/connectTcp
+      // on this side), keep the first-established connection (the outbound fd)
+      // and discard the later one (the accepted fd).
+      // This prevents the accept thread from breaking an already-working
+      // bidirectional UDS connection, which would cause sendU64/recvU64 to fail.
+      std::unique_lock<std::mutex> lk(mu_);
+      auto it = id_to_conn_.find(peer_id);
+      if (it == id_to_conn_.end()) {
+        id_to_conn_[peer_id].fd = fd;
+      } else {
+        ::shutdown(fd, SHUT_RDWR);
+        ::close(fd);
+      }
     }
-    id_to_conn_[peer_id].fd = fd;
-  }
   // cv_.notify_all();
 
   return true;

@@ -28,7 +28,7 @@ std::string client_ip;
 std::string tcp_server_ip;
 
 size_t buffer_size = 1024ULL * 1024 * 128; // max 32 for MLU
-const int device_id = 0;
+int device_id = 0;
 const int g_port = 2025;
 const int ctrl_port = 2027;
 
@@ -38,8 +38,8 @@ Communicator *comm = nullptr;
 std::shared_ptr<ConnBuffer> buffer;
 std::shared_ptr<ConnBuffer> gpu_buffer;
 
-Memory *gpu_mem_op = new Memory(device_id);
-Memory *cpu_mem_op = new Memory(0, MemoryType::CPU);
+Memory *gpu_mem_op = nullptr;
+Memory *cpu_mem_op = nullptr;
 
 struct Context {
   void *cpu_data_ptr;
@@ -124,6 +124,21 @@ void close_control_connection() {
 
 void send_channel_slice_uhm(Context ctx) {
   total_time = 0;
+
+  const bool same_host = (server_ip == client_ip);
+  if (same_host) {
+    // P2P mode: write GPU data to ConnBuffer, then putP2p to server's ConnBuffer
+    auto start = steady_clock_t::now();
+
+    buffer->writeFromGpu(ctx.gpu_data_ptr, ctx.size, 0);
+    comm->putP2p(peer_rank, 0, 0, ctx.size);
+
+    auto end = steady_clock_t::now();
+    total_time = std::chrono::duration_cast<std::chrono::microseconds>(end - start).count();
+    send_control_message("Finished");
+    return;
+  }
+
   auto start = steady_clock_t::now();
 
   auto status =
@@ -460,6 +475,12 @@ int main(int argc, char *argv[]) {
   peer_rank = get_env_u32_or_default("PEER_RANK", 0);
   std::cout << "Ranks: self=" << self_rank << " peer=" << peer_rank << std::endl;
 
+  const bool same_host = (server_ip == client_ip);
+  if (same_host) device_id = static_cast<int>(self_rank);
+
+  if (!gpu_mem_op) gpu_mem_op = new Memory(device_id);
+  if (!cpu_mem_op) cpu_mem_op = new Memory(0, MemoryType::CPU);
+
   int num_channels = get_env_u32_or_default("NUM_CHANNELS", 1);
   std::cout << "Using " << num_channels << " QPs" << std::endl;
 
@@ -516,45 +537,54 @@ int main(int argc, char *argv[]) {
   ConnType conn_type = (mode == "ucx") ? ConnType::UCX : ConnType::RDMA;
   int port = g_port;
 
-  // ---- ctrl link: same-host => UDS, cross-host => TCP ----
-  Communicator::CtrlLink ctrl_link;
-  const bool same_host = (server_ip == client_ip);
-
   if (same_host) {
-    ctrl_link.transport = Communicator::CtrlTransport::UDS;
     std::string uds_dir = get_env_or_default("CTRL_UDS_DIR", "/tmp");
-    ctrl_link.uds_path =
-        Communicator::udsPathFor(uds_dir, peer_rank); // server rank path
-    std::cout << "Ctrl transport=UDS (same_host) path=" << ctrl_link.uds_path
-              << std::endl;
+    std::string uds_path = Communicator::udsPathFor(uds_dir, self_rank);
+    comm->initCtrlServer("127.0.0.1", 0, uds_path);
+
+    // Signal server via TCP before UDS connect
+    if (!connect_control_server(tcp_server_ip, ctrl_port)) {
+      std::cerr << "Failed to connect control server" << std::endl;
+      return -1;
+    }
+    send_control_message("START");
+
+    Communicator::CtrlLink link;
+    link.transport = Communicator::CtrlTransport::UDS;
+    link.uds_path = Communicator::udsPathFor(uds_dir, peer_rank);
+    std::this_thread::sleep_for(std::chrono::milliseconds(500));
+    comm->connectCtrl(peer_rank, self_rank, link);
+
+    comm->connectP2p(peer_rank, self_rank, device_id,
+                     buffer->mem_ops ? buffer->mem_ops->getMemoryType() : MemoryType::DEFAULT);
+    std::cout << "P2P connection established (same-host IPC)" << std::endl;
   } else {
+    // ---- Original RDMA/UCX connect ----
+    Communicator::CtrlLink ctrl_link;
     ctrl_link.transport = Communicator::CtrlTransport::TCP;
     ctrl_link.ip = server_ip;
     ctrl_link.port = static_cast<uint16_t>(ctrl_port + 1);
     std::cout << "Ctrl transport=TCP " << ctrl_link.ip << ":" << ctrl_link.port
               << std::endl;
-  }
 
-  {
     auto r = comm->connectTo(peer_rank, self_rank, server_ip,
                              static_cast<uint16_t>(port), ctrl_link, conn_type);
     if (r != status_t::SUCCESS) {
       std::cerr << "HMC connectTo failed" << std::endl;
       return -1;
     }
-  }
-
-  std::this_thread::sleep_for(std::chrono::seconds(1));
-
-  int retry_count = 0;
-  while (!connect_control_server(tcp_server_ip, ctrl_port)) {
-    if (retry_count > 5) {
-      std::cerr << "Failed to connect control server :" << tcp_server_ip
-                << std::endl;
-      return -1;
-    }
-    retry_count++;
     std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    int retry_count = 0;
+    while (!connect_control_server(tcp_server_ip, ctrl_port)) {
+      if (retry_count > 5) {
+        std::cerr << "Failed to connect control server :" << tcp_server_ip
+                  << std::endl;
+        return -1;
+      }
+      retry_count++;
+      std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
   }
 
   void (*send_func)(Context) = nullptr;

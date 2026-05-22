@@ -57,14 +57,16 @@ status_t NeuwareMemory::allocatePeerableBuffer(void **addr, size_t size) {
   if (this->mem_type != MemoryType::CAMBRICON_MLU) {
     return status_t::UNSUPPORT;
   }
-  // logInfo("Allocate memory using cnMallocPeerAble.");
   ret = cnMallocPeerAble(&this->mlu_addr, buf_size);
   if (ret != CN_SUCCESS) {
-    logError("failed to allocate memory %d.", ret);
-    return status_t::ERROR;
+    logInfo("cnMallocPeerAble failed %d, fallback to cnMalloc", ret);
+    ret = cnMalloc(&this->mlu_addr, buf_size);
+    if (ret != CN_SUCCESS) {
+      logError("cnMalloc also failed %d.", ret);
+      return status_t::ERROR;
+    }
   }
   *addr = (void *)this->mlu_addr;
-  // todo : dmabuf support : cuMemGetHandleForAddressRange()
   return status_t::SUCCESS;
 }
 

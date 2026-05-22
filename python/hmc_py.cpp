@@ -91,6 +91,7 @@ PYBIND11_MODULE(hmc, m) {
   py::enum_<hmc::ConnType>(m, "ConnType")
       .value("RDMA", hmc::ConnType::RDMA)
       .value("UCX", hmc::ConnType::UCX)
+      .value("P2P", hmc::ConnType::P2P)
       .export_values();
 
   py::class_<hmc::ConnBuffer, std::shared_ptr<hmc::ConnBuffer>>(m, "ConnBuffer")
@@ -320,7 +321,22 @@ PYBIND11_MODULE(hmc, m) {
 
       .def("checkConn", &hmc::Communicator::checkConn,
            py::arg("ip"), py::arg("port"),
-           py::arg("connType") = hmc::ConnType::RDMA);
+           py::arg("connType") = hmc::ConnType::RDMA)
+
+      .def("connectP2p", &hmc::Communicator::connectP2p,
+           py::arg("peer_id"), py::arg("self_id"),
+           py::arg("device_id"), py::arg("mem_type"))
+
+      .def("addP2pEndpoint", &hmc::Communicator::addP2pEndpoint,
+           py::arg("peer_rank"), py::arg("endpoint"))
+
+      .def("putP2p", &hmc::Communicator::putP2p,
+           py::arg("peer_rank"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"))
+
+      .def("getP2p", &hmc::Communicator::getP2p,
+           py::arg("peer_rank"), py::arg("local_off"),
+           py::arg("remote_off"), py::arg("size"));
 
   py::class_<PyBufferWrapper>(m, "Buffer", py::buffer_protocol())
       .def_buffer([](PyBufferWrapper &b) -> py::buffer_info {

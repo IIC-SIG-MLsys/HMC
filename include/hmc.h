@@ -95,7 +95,8 @@ public:
  */
 enum class ConnType {
   RDMA, ///< Remote Direct Memory Access
-  UCX   ///< Unified Communication X framework
+  UCX,  ///< Unified Communication X framework
+  P2P   ///< Peer-to-peer via IPC (same-host)
 };
 
 /**
@@ -361,6 +362,13 @@ public:
                      ConnType connType);
   status_t disConnect(const std::string& ip, uint16_t port, ConnType connType);
   status_t checkConn(const std::string& ip, uint16_t port, ConnType connType);
+
+  // P2P (same-host IPC)
+  status_t connectP2p(CtrlId peer_id, CtrlId self_id, int device_id,
+                      MemoryType mem_type);
+  status_t addP2pEndpoint(int peer_rank, std::unique_ptr<Endpoint> endpoint);
+  status_t putP2p(int peer_rank, size_t local_off, size_t remote_off, size_t size);
+  status_t getP2p(int peer_rank, size_t local_off, size_t remote_off, size_t size);
 
   ~Communicator();
 };

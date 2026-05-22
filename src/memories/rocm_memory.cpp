@@ -12,7 +12,14 @@ namespace hmc {
 /*
  * amd gpu memory
  */
-status_t RocmMemory::init() { return gpuInit(); }
+status_t RocmMemory::init() {
+  hipError_t err = hipSetDevice(this->device_id);
+  if (err != hipSuccess) {
+    logError("RocmMemory hipSetDevice(%d) failed: %d", this->device_id, err);
+    return status_t::ERROR;
+  }
+  return gpuInit();
+}
 
 status_t RocmMemory::free() { return status_t::SUCCESS; }
 

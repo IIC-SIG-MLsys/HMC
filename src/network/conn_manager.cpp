@@ -4,6 +4,7 @@
 #include "net.h"
 #include "net_rdma.h"
 #include "net_ucx.h"
+#include "p2p/p2p_endpoint.h"
 
 #include <functional>
 
@@ -249,6 +250,40 @@ status_t ConnManager::_removeEndpointIfMatch(std::string ip, uint16_t port,
 
 ConnManager::~ConnManager() {
   stopServer();
+}
+
+status_t ConnManager::initiateP2pConnection(int peer_rank,
+                                             std::unique_ptr<Endpoint> endpoint) {
+  if (!endpoint) return status_t::ERROR;
+  _addP2pEndpoint(peer_rank, std::move(endpoint));
+  return status_t::SUCCESS;
+}
+
+void ConnManager::_addP2pEndpoint(int peer_rank,
+                                   std::unique_ptr<Endpoint> endpoint) {
+  if (!endpoint) return;
+  std::lock_guard<std::mutex> lock(p2p_endpoint_map_mutex_);
+  auto &entry = p2p_endpoint_map_[peer_rank];
+  if (!entry) entry = std::make_shared<EndpointEntry>();
+  entry->endpoint = std::move(endpoint);
+}
+
+void ConnManager::_removeP2pEndpoint(int peer_rank) {
+  std::shared_ptr<EndpointEntry> entry;
+  std::unique_ptr<Endpoint> to_delete;
+  {
+    std::lock_guard<std::mutex> lock(p2p_endpoint_map_mutex_);
+    auto it = p2p_endpoint_map_.find(peer_rank);
+    if (it == p2p_endpoint_map_.end()) return;
+    entry = it->second;
+    p2p_endpoint_map_.erase(it);
+  }
+  if (!entry) return;
+  {
+    std::lock_guard<std::mutex> entry_lock(entry->mutex);
+    to_delete = std::move(entry->endpoint);
+  }
+  to_delete.reset();
 }
 
 } // namespace hmc

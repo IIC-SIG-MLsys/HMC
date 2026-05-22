@@ -45,6 +45,7 @@ class MemoryType(IntEnum):
 class ConnType(IntEnum):
     RDMA = int(_core.ConnType.RDMA)
     UCX = int(_core.ConnType.UCX)
+    P2P = int(_core.ConnType.P2P)
 
     @classmethod
     def _from_core(cls, x: Any) -> "ConnType":
@@ -710,6 +711,27 @@ class Session:
         st, tag = self.comm.ctrlRecv(int(peer))
         _ensure_ok(st, "Communicator.ctrlRecv failed")
         return int(tag)
+
+    def connect_p2p(self, peer_id: int, self_id: int, device_id: int,
+                    mem_type: MemoryType) -> None:
+        _ensure_ok(
+            self.comm.connectP2p(int(peer_id), int(self_id), int(device_id),
+                                 _to_core_memory_type(mem_type)),
+            "Communicator.connectP2p failed")
+
+    def put_p2p(self, peer_rank: int, local_off: int, remote_off: int,
+                nbytes: int) -> None:
+        _ensure_ok(
+            self.comm.putP2p(int(peer_rank), int(local_off), int(remote_off),
+                             int(nbytes)),
+            "Communicator.putP2p failed")
+
+    def get_p2p(self, peer_rank: int, local_off: int, remote_off: int,
+                nbytes: int) -> None:
+        _ensure_ok(
+            self.comm.getP2p(int(peer_rank), int(local_off), int(remote_off),
+                             int(nbytes)),
+            "Communicator.getP2p failed")
 
     def buffer_put_then_put(
         self,

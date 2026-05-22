@@ -170,9 +170,13 @@ def _nbytes(x: Any) -> int:
     return len(memoryview(x).cast("B"))
 
 
-def _pick_conn(a: MemoryType, b: MemoryType) -> ConnType:
+def _pick_conn(a: MemoryType, b: MemoryType, same_node: bool = False) -> ConnType:
     a = MemoryType(int(a))
     b = MemoryType(int(b))
+
+    if same_node and a == b:
+        if a == MemoryType.CAMBRICON_MLU:
+            return ConnType.P2P
 
     UCX_GPU = {MemoryType.NVIDIA_GPU, MemoryType.AMD_GPU}
     RDMA_GPU = {MemoryType.CAMBRICON_MLU, MemoryType.MOORE_GPU}
@@ -206,7 +210,10 @@ def _conn_for_pair(group: Group, a_rank: int, b_rank: int, conn: ConnType | str)
         return ConnType(conn)
     a = group.peer(a_rank).memory_type
     b = group.peer(b_rank).memory_type
-    return _pick_conn(a, b)
+    a_ip = str(group.peer(a_rank).ip)
+    b_ip = str(group.peer(b_rank).ip)
+    same_node = (a_ip == b_ip)
+    return _pick_conn(a, b, same_node=same_node)
 
 
 def _connect_peer(group: Group, peer_rank: int, conn: ConnType) -> None:

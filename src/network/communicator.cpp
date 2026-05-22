@@ -3,6 +3,8 @@
  */
 #include "./net.h"
 #include "./net_rdma.h"
+#include "./p2p/p2p_transport.h"
+#include "./p2p/p2p_endpoint.h"
 #include <hmc.h>
 
 namespace hmc {
@@ -327,6 +329,75 @@ status_t Communicator::checkConn(const std::string &ip, uint16_t port, ConnType 
         logDebug("[Communicator] did not have connection to %s:%u", ip.c_str(), (unsigned)port);
         return status_t::ERROR;
       });
+}
+
+status_t Communicator::connectP2p(CtrlId peer_id, CtrlId self_id,
+                                   int device_id, MemoryType mem_type) {
+  auto &ctrl = hmc::CtrlSocketManager::instance();
+
+  if (!buffer->ptr) {
+    logError("connectP2p: ConnBuffer ptr is null");
+    return status_t::ERROR;
+  }
+
+  auto transport = P2pTransport::create(mem_type);
+  if (!transport) {
+    logError("P2pTransport not available for mem_type=%d", (int)mem_type);
+    return status_t::UNSUPPORT;
+  }
+
+  status_t st = transport->init(device_id, buffer->ptr, buffer->buffer_size);
+  if (st != status_t::SUCCESS) { logError("P2pTransport init failed"); return st; }
+
+  // Export local handle
+  uint8_t local_handle[P2P_HANDLE_SIZE] = {};
+  st = transport->exportHandle(local_handle);
+  if (st != status_t::SUCCESS) { logError("exportHandle failed"); return st; }
+
+  // Exchange handles via UDS
+  uint8_t peer_handle[P2P_HANDLE_SIZE] = {};
+  if (self_id < peer_id) {
+    ctrl.sendStruct(peer_id, local_handle);
+    ctrl.recvStruct(peer_id, peer_handle);
+  } else {
+    ctrl.recvStruct(peer_id, peer_handle);
+    ctrl.sendStruct(peer_id, local_handle);
+  }
+
+  // Import peer handle (guess peer_device from peer_id)
+  int peer_device = static_cast<int>(peer_id);
+  void *peer_ptr = nullptr;
+  st = transport->importHandle(peer_handle, peer_ptr, peer_device);
+  if (st != status_t::SUCCESS) { logError("importHandle failed"); return st; }
+
+  int peer_rank = static_cast<int>(peer_id);
+
+  auto ep = std::make_unique<P2pEndpoint>(std::move(transport), buffer->ptr,
+                                          peer_ptr, peer_rank);
+  return conn_manager->initiateP2pConnection(peer_rank, std::move(ep));
+}
+
+status_t Communicator::putP2p(int peer_rank, size_t local_off,
+                               size_t remote_off, size_t size) {
+  return conn_manager->withP2pEndpoint(peer_rank,
+      [local_off, remote_off, size](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        return ep->writeData(local_off, remote_off, size);
+      });
+}
+
+status_t Communicator::getP2p(int peer_rank, size_t local_off,
+                               size_t remote_off, size_t size) {
+  return conn_manager->withP2pEndpoint(peer_rank,
+      [local_off, remote_off, size](Endpoint *ep) -> status_t {
+        if (!ep) return status_t::ERROR;
+        return ep->readData(local_off, remote_off, size);
+      });
+}
+
+status_t Communicator::addP2pEndpoint(int peer_rank,
+                                       std::unique_ptr<Endpoint> endpoint) {
+  return conn_manager->initiateP2pConnection(peer_rank, std::move(endpoint));
 }
 
 } // namespace hmc
