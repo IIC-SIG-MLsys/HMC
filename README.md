@@ -1,3 +1,6 @@
+> [!NOTE]
+> Building on HMC, our team has developed **HUX**, a closed-source communication library supporting most major GPU platforms and delivering improved performance under network congestion. HUX is actively maintained internally. For technical collaboration, evaluation, or integration inquiries, please contact our team at jacelau@outlook.com.
+
 ## What is HMC?
 
 <p align="center">
